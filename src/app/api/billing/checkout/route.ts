@@ -1,45 +1,69 @@
-import { NextResponse } from "next/server";
+// src/app/api/billing/checkout/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
+  // Omit apiVersion to avoid type/version mismatches on build
 });
 
-export async function POST(req: Request) {
-  try {
-    const { email } = await req.json();
+function absoluteReturnUrl(req: NextRequest, path = "/") {
+  // Prefer NEXT_PUBLIC_SITE_URL if you set it; otherwise infer from request
+  const base =
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    `${req.nextUrl.protocol}//${req.nextUrl.host}`;
+  return new URL(path, base).toString();
+}
 
-    // Ensure customer exists or create one
-    const customers = await stripe.customers.list({ email, limit: 1 });
-    const customer =
-      customers.data.length > 0
-        ? customers.data[0]
-        : await stripe.customers.create({ email });
-
-    // Create checkout session
-    const session = await stripe.checkout.sessions.create({
-      customer: customer.id,
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price: process.env.STRIPE_PRICE_ID!, // Your $9.99 price from Stripe
-          quantity: 1,
-        },
-      ],
-      mode: "subscription",
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/cancel`,
-    });
-
-    return NextResponse.json({ id: session.id, url: session.url });
-  } catch (err: any) {
-    console.error("Checkout error:", err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
+async function getOrCreateCustomer(email: string) {
+  const existing = await stripe.customers.list({ email, limit: 1 });
+  if (existing.data.length > 0) return existing.data[0];
+  return await stripe.customers.create({ email });
 }
 
 export async function GET() {
+  // simple readiness signal
   return NextResponse.json({ ok: true, where: "/api/billing/checkout", method: "GET" });
 }
 
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const email =
+      body?.email ||
+      req.headers.get("x-user-email") ||
+      req.headers.get("x-email");
+
+    if (!email) {
+      return NextResponse.json(
+        { error: "Missing email (send JSON {email} or x-user-email header)" },
+        { status: 400 }
+      );
+    }
+
+    const priceId = process.env.STRIPE_PRICE_ID;
+    if (!priceId) {
+      return NextResponse.json({ error: "STRIPE_PRICE_ID not set" }, { status: 500 });
+    }
+
+    const customer = await getOrCreateCustomer(email);
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customer.id,
+      success_url: absoluteReturnUrl(req, "/?checkout=success"),
+      cancel_url: absoluteReturnUrl(req, "/?checkout=cancel"),
+      line_items: [{ price: priceId, quantity: 1 }],
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      subscription_data: {
+        metadata: { appUserEmail: email },
+      },
+    });
+
+    return NextResponse.json({ url: session.url }, { status: 200 });
+  } catch (err: any) {
+    console.error("checkout error", err);
+    return NextResponse.json({ error: err?.message || "Checkout error" }, { status: 500 });
+  }
+}
 
