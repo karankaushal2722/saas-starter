@@ -1,3 +1,4 @@
+// success/page.tsx
 export default function SuccessPage() {
   return (
     <main style={{ padding: 24 }}>
@@ -6,3 +7,4 @@ export default function SuccessPage() {
     </main>
   );
 }
+
