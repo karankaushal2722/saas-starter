@@ -1,51 +1,44 @@
-// src/app/billing/checkout/route.ts
+// src/app/api/billing/checkout/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+
+export const runtime = "nodejs"; // serverful for Stripe SDK
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2024-06-20",
+});
+
+export async function GET() {
+  return NextResponse.json({ ok: true, where: "/api/billing/checkout", method: "GET" });
+}
 
 export async function POST(req: NextRequest) {
   try {
     const { email } = await req.json();
 
-    // Build the base URL of your deployed app
+    // Build your app's base URL (works on Vercel + local)
     const appUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
-      `${req.headers.get("x-forwarded-proto") ?? "https"}://${req
-        .headers.get("host")!
-        .trim()}`;
+      `${req.headers.get("x-forwarded-proto") ?? "https"}://${req.headers.get("host")}`;
 
-    // Create a Stripe instance (no apiVersion override -> fixes the build error)
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    // Minimal: let price come from env; you can also pass price dynamically
+    const price = process.env.STRIPE_PRICE_ID;
+    if (!price) {
+      return NextResponse.json({ error: "Missing STRIPE_PRICE_ID" }, { status: 500 });
+    }
 
-    // Create a Checkout Session (subscription)
-    // Make sure STRIPE_PRICE_ID is set in your env (a recurring price ID)
+    // Create a simple subscription checkout session
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      line_items: [
-        {
-          price: process.env.STRIPE_PRICE_ID!,
-          quantity: 1,
-        },
-      ],
-      customer_email: email, // or use your own customer lookup/creation logic
+      customer_email: email,
+      line_items: [{ price, quantity: 1 }],
       success_url: `${appUrl}/billing/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}/billing/checkout/cancel`,
-      // add other options you need: allow_promotion_codes, trial settings, etc.
     });
 
     return NextResponse.json({ url: session.url }, { status: 200 });
   } catch (err: any) {
     console.error("Checkout error:", err);
-    return NextResponse.json(
-      { error: err?.message ?? "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err.message ?? "Server error" }, { status: 500 });
   }
-}
-
-// Optional: friendly GET so you can hit this route in a browser and see it's live
-export async function GET(req: NextRequest) {
-  return NextResponse.json(
-    { ok: true, where: "/api/billing/checkout", method: "GET" },
-    { status: 200 }
-  );
 }
