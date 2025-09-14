@@ -5,28 +5,25 @@ import Stripe from "stripe";
 export const runtime = "nodejs";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
+  apiVersion: "2025-08-27.basil",
 });
 
 export async function POST(req: NextRequest) {
   try {
     const { email } = await req.json();
 
-    // You can look up or create a customer as you already did — omitted here for brevity
-    // Assume you have a valid `customerId` at this point:
-    // const customerId = ...
+    const host = req.headers.get("host") ?? "localhost:3000";
+    const protocol = host.includes("localhost") ? "http" : "https";
+    const appUrl = `${protocol}://${host}`;
 
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const priceId = process.env.STRIPE_PRICE_ID ?? "price_XXXXX"; // <-- put your real price id
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      // line_items: [{ price: "price_XXXXX", quantity: 1 }],
-      // customer: customerId,   // keep your logic
-      // customer_email: email,  // or use this if no customer yet
+      line_items: [{ price: priceId, quantity: 1 }],
+      customer_email: email, // or `customer: 'cus_...'` if you already have a customer
       success_url: `${appUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}/checkout/cancel`,
-      // ... any other params you already set (allow_promotion_codes, trial settings, etc)
     });
 
     return NextResponse.json({ url: session.url }, { status: 200 });
