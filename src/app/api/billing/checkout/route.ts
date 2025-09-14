@@ -2,43 +2,55 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export const runtime = "nodejs"; // serverful for Stripe SDK
+export const runtime = "nodejs"; // needed for webhooks too, but fine here
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2024-06-20",
 });
 
+function resolveAppUrl(req: NextRequest): string {
+  // Prefer explicit public URL; otherwise derive from the request
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (envUrl) return envUrl.replace(/\/$/, "");
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const host = req.headers.get("host") ?? "localhost:3000";
+  return `${proto}://${host}`;
+}
+
 export async function GET() {
-  return NextResponse.json({ ok: true, where: "/api/billing/checkout", method: "GET" });
+  return NextResponse.json({ ok: true, route: "/api/billing/checkout" });
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const email: string | undefined = body?.email;
+    const appUrl = resolveAppUrl(req);
 
-    // Build your app's base URL (works on Vercel + local)
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL ||
-      `${req.headers.get("x-forwarded-proto") ?? "https"}://${req.headers.get("host")}`;
-
-    // Minimal: let price come from env; you can also pass price dynamically
-    const price = process.env.STRIPE_PRICE_ID;
-    if (!price) {
-      return NextResponse.json({ error: "Missing STRIPE_PRICE_ID" }, { status: 500 });
+    const priceId = process.env.STRIPE_PRICE_ID;
+    if (!priceId) {
+      return NextResponse.json(
+        { error: "Missing STRIPE_PRICE_ID env var" },
+        { status: 500 }
+      );
     }
 
-    // Create a simple subscription checkout session
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer_email: email,
-      line_items: [{ price, quantity: 1 }],
+      line_items: [{ price: priceId, quantity: 1 }],
+      customer_email: email, // optional; Stripe will create customer if needed
       success_url: `${appUrl}/billing/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}/billing/checkout/cancel`,
+      // You can add trial/promo settings here if needed
     });
 
     return NextResponse.json({ url: session.url }, { status: 200 });
   } catch (err: any) {
     console.error("Checkout error:", err);
-    return NextResponse.json({ error: err.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: err?.message ?? "Server error" },
+      { status: 500 }
+    );
   }
 }
+

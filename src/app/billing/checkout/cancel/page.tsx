@@ -1,4 +1,4 @@
-// cancel/page.tsx
+// src/app/billing/checkout/cancel/page.tsx
 export default function CancelPage() {
   return (
     <main style={{ padding: 24 }}>
