@@ -2,34 +2,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export const runtime = "nodejs"; // Stripe server SDK needs Node runtime
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2025-08-27.basil",
-});
-
 export async function POST(req: NextRequest) {
   try {
-    const { email } = (await req.json()) as { email?: string };
+    const { email } = await req.json();
 
-    // Build your app's base URL
+    // Build the base URL of your deployed app
     const appUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
-      `${req.headers.get("x-forwarded-proto") ?? "https"}://${req.headers.get("host")}`;
+      `${req.headers.get("x-forwarded-proto") ?? "https"}://${req
+        .headers.get("host")!
+        .trim()}`;
 
-    // ⚠️ You must attach either price/line_items OR a Price on the customer.
-    // This example assumes you have a test price in Stripe called price_XXXX.
+    // Create a Stripe instance (no apiVersion override -> fixes the build error)
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+    // Create a Checkout Session (subscription)
+    // Make sure STRIPE_PRICE_ID is set in your env (a recurring price ID)
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer_email: email, // or pass a customer id if you have it
       line_items: [
         {
-          price: process.env.STRIPE_PRICE_ID!, // set this in your env (e.g. price_123...)
+          price: process.env.STRIPE_PRICE_ID!,
           quantity: 1,
         },
       ],
+      customer_email: email, // or use your own customer lookup/creation logic
       success_url: `${appUrl}/billing/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}/billing/checkout/cancel`,
+      // add other options you need: allow_promotion_codes, trial settings, etc.
     });
 
     return NextResponse.json({ url: session.url }, { status: 200 });
@@ -42,3 +42,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// Optional: friendly GET so you can hit this route in a browser and see it's live
+export async function GET(req: NextRequest) {
+  return NextResponse.json(
+    { ok: true, where: "/api/billing/checkout", method: "GET" },
+    { status: 200 }
+  );
+}
