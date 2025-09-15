@@ -2,57 +2,67 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export const runtime = "nodejs";
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
+  // IMPORTANT: keep this in sync with the types on Vercel
+  apiVersion: "2023-10-16",
 });
+
+function bufferToText(buffer: ArrayBuffer) {
+  return Buffer.from(buffer).toString("utf8");
+}
 
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature");
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
 
-  if (!sig || !secret) {
-    return NextResponse.json(
-      { error: "Missing Stripe signature or webhook secret" },
-      { status: 400 }
-    );
+  if (!sig) {
+    return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
   }
+
+  const rawBody = await req.arrayBuffer();
+  const textBody = bufferToText(rawBody);
 
   let event: Stripe.Event;
 
   try {
-    const rawBody = await req.text(); // raw string body
-    event = await stripe.webhooks.constructEventAsync(rawBody, sig, secret);
-  } catch (err: any) {
-    console.error("Webhook signature verification failed:", err.message);
-    return NextResponse.json(
-      { error: `Webhook Error: ${err.message}` },
-      { status: 400 }
+    event = stripe.webhooks.constructEvent(
+      textBody,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET!
     );
+  } catch (err: any) {
+    console.error("Webhook signature verification failed.", err.message);
+    return NextResponse.json({ error: `Webhook Error: ${err.message}` }, { status: 400 });
   }
 
   try {
     switch (event.type) {
       case "checkout.session.completed":
-        console.log("✔ checkout.session.completed", event.id);
+        // Add your fulfillment logic here
+        console.log("checkout.session.completed", event.id);
         break;
       case "customer.subscription.created":
-        console.log("✔ subscription created", event.id);
-        break;
       case "customer.subscription.updated":
-        console.log("✔ subscription updated", event.id);
-        break;
-      case "invoice.payment_succeeded":
-        console.log("✔ invoice paid", event.id);
+      case "customer.subscription.deleted":
+        console.log(event.type, event.id);
         break;
       default:
-        console.log("ℹ unhandled event", event.type);
+        console.log(`Unhandled event type ${event.type}`);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("Webhook handler error:", err);
     return NextResponse.json({ error: "Handler error" }, { status: 500 });
   }
 
   return NextResponse.json({ received: true }, { status: 200 });
+}
+
+// Optional: allow GET so you can quickly ping the route in the browser
+export async function GET() {
+  return NextResponse.json({ ok: true, route: "/api/stripe/webhook", method: "POST only" });
 }
