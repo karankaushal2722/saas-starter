@@ -1,12 +1,11 @@
 // prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -15,9 +14,16 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Profile fields
-  companyName     String? // e.g., "Kaushal Logistics LLC"
-  industry        String? // e.g., "Trucking", "Restaurant"
+  // Profile
+  companyName     String?
+  industry        String?
   language        String? // e.g., "en", "es", "pa"
-  complianceFocus String? // e.g., "IRS,DOT,FDA" (comma-separated list)
+  complianceFocus String? // e.g., "IRS,DOT,FDA"
+
+  // Stripe linkage
+  stripeCustomerId   String?   @unique
+  subscriptionStatus String? // trialing | active | past_due | canceled | incomplete | etc.
+  subscriptionPlan   String? // e.g., pro, premium
+  currentPeriodEnd   DateTime?
+  trialEndsAt        DateTime?
 }
