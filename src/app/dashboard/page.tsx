@@ -1,195 +1,134 @@
-// src/app/dashboard/page.tsx
-import { cookies } from 'next/headers';
-import Link from 'next/link';
+"use client";
 
-async function fetchProfile(baseUrl: string) {
-  const res = await fetch(`${baseUrl}/api/profile`, {
-    // Use Vercel internal fetch on the server; cookies are forwarded automatically in App Router
-    cache: 'no-store',
+import { useState } from "react";
+
+type Profile = {
+  companyName: string;
+  industry: string;
+  language: string;
+  complianceFocus: string;
+};
+
+export default function DashboardPage() {
+  // simple local state (client component)
+  const [profile, setProfile] = useState<Profile>({
+    companyName: "",
+    industry: "",
+    language: "en",
+    complianceFocus: "",
   });
-  if (!res.ok) return null;
-  return res.json();
-}
 
-function t(lang: string | null | undefined, key: string) {
-  const en = {
-    title: 'Your Business Profile',
-    subtitle: 'Tell us about your business so advice is tailored to you.',
-    company: 'Company name',
-    industry: 'Industry',
-    language: 'Preferred language',
-    focus: 'Compliance focus (comma-separated, e.g., IRS,DOT,FDA)',
-    save: 'Save profile',
-    saved: 'Saved!',
-  };
-  const es = {
-    title: 'Tu perfil de negocio',
-    subtitle: 'Cuéntanos sobre tu negocio para personalizar el asesoramiento.',
-    company: 'Nombre de la empresa',
-    industry: 'Industria',
-    language: 'Idioma preferido',
-    focus: 'Enfoque de cumplimiento (separado por comas, ej.: IRS,DOT,FDA)',
-    save: 'Guardar perfil',
-    saved: '¡Guardado!',
-  };
-  const pa = {
-    title: 'ਤੁਹਾਡਾ ਬਿਜ਼ਨਸ ਪ੍ਰੋਫ਼ਾਈਲ',
-    subtitle: 'ਸਾਨੂੰ ਆਪਣੇ ਬਿਜ਼ਨਸ ਬਾਰੇ ਦੱਸੋ ਤਾਂ ਜੋ ਸਲਾਹ ਤੁਹਾਡੇ ਲਈ ਹੋਵੇ।',
-    company: 'ਕੰਪਨੀ ਦਾ ਨਾਮ',
-    industry: 'ਇੰਡਸਟਰੀ',
-    language: 'ਪਸੰਦੀਦਾ ਭਾਸ਼ਾ',
-    focus: 'ਕਾਮਪਲਾਇੰਸ ਫੋਕਸ (ਕਾਮਾ ਨਾਲ, ਜਿਵੇਂ: IRS,DOT,FDA)',
-    save: 'ਪ੍ਰੋਫ਼ਾਈਲ ਸੇਵ ਕਰੋ',
-    saved: 'ਸੇਵ ਹੋ ਗਿਆ!',
-  };
-
-  const dict = lang === 'es' ? es : lang === 'pa' ? pa : en;
-  return (dict as any)[key];
-}
-
-export default async function DashboardPage() {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_BASE_URL ??
-    `https://${process.env.VERCEL_URL ?? 'saas-starter-beta-two.vercel.app'}`;
-
-  const data = await fetchProfile(baseUrl);
-  const user = data?.user ?? null;
-  const lang = user?.language ?? 'en';
-
-  return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{t(lang, 'title')}</h1>
-        <Link
-          href="/"
-          className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
-        >
-          Home
-        </Link>
-      </div>
-
-      <p className="mb-8 text-gray-600">{t(lang, 'subtitle')}</p>
-
-      <ProfileForm
-        defaults={{
-          companyName: user?.companyName ?? '',
-          industry: user?.industry ?? '',
-          language: user?.language ?? 'en',
-          complianceFocus: user?.complianceFocus ?? '',
-        }}
-        baseUrl={baseUrl}
-        dict={(k) => t(lang, k)}
-      />
-    </main>
-  );
-}
-
-// ----- Client component -----
-'use client';
-
-import { useState } from 'react';
-
-function ProfileForm({
-  defaults,
-  baseUrl,
-  dict,
-}: {
-  defaults: {
-    companyName: string;
-    industry: string;
-    language: string;
-    complianceFocus: string;
-  };
-  baseUrl: string;
-  dict: (k: string) => string;
-}) {
-  const [form, setForm] = useState(defaults);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
-  async function onSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setMsg(null);
+    setMessage(null);
     try {
-      const res = await fetch(`${baseUrl}/api/profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      // If you already created /api/profile, this will hit it.
+      // If not, this still compiles; you can wire it later.
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profile),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Failed');
-      setMsg(dict('saved'));
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to save profile");
+      }
+      setMessage("Profile saved ✅");
     } catch (err: any) {
-      setMsg(err.message ?? 'Error');
+      setMessage(err.message || "Something went wrong");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
-      <div>
-        <label className="mb-1 block text-sm font-medium">
-          {dict('company')}
-        </label>
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          value={form.companyName}
-          onChange={(e) => setForm({ ...form, companyName: e.target.value })}
-          placeholder="Kaushal Logistics LLC"
-        />
-      </div>
+    <main className="mx-auto max-w-3xl p-6">
+      <h1 className="mb-2 text-2xl font-semibold">Dashboard</h1>
+      <p className="mb-8 text-sm text-gray-500">
+        Store a few preferences so your assistant can tailor guidance to your business.
+      </p>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium">
-          {dict('industry')}
-        </label>
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          value={form.industry}
-          onChange={(e) => setForm({ ...form, industry: e.target.value })}
-          placeholder="Trucking"
-        />
-      </div>
+      <section className="rounded-lg border bg-white p-5 shadow-sm">
+        <h2 className="mb-4 text-lg font-medium">Business profile</h2>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium">
-          {dict('language')}
-        </label>
-        <select
-          className="w-full rounded-md border px-3 py-2"
-          value={form.language}
-          onChange={(e) => setForm({ ...form, language: e.target.value })}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Company name</label>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={profile.companyName}
+              onChange={(e) => setProfile((p) => ({ ...p, companyName: e.target.value }))}
+              placeholder="e.g., Kaushal Logistics LLC"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Industry</label>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={profile.industry}
+              onChange={(e) => setProfile((p) => ({ ...p, industry: e.target.value }))}
+              placeholder="e.g., Trucking, Restaurant, Retail"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Language</label>
+            <select
+              className="w-full rounded-md border px-3 py-2"
+              value={profile.language}
+              onChange={(e) => setProfile((p) => ({ ...p, language: e.target.value }))}
+            >
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="pa">Punjabi</option>
+              <option value="hi">Hindi</option>
+              <option value="ur">Urdu</option>
+              <option value="ar">Arabic</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">Compliance focus</label>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={profile.complianceFocus}
+              onChange={(e) => setProfile((p) => ({ ...p, complianceFocus: e.target.value }))}
+              placeholder="e.g., IRS, DOT, FDA"
+            />
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-md bg-black px-4 py-2 text-white disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save profile"}
+            </button>
+
+            {message && <span className="text-sm text-gray-600">{message}</span>}
+          </div>
+        </form>
+      </section>
+
+      <section className="mt-8 rounded-lg border bg-white p-5 shadow-sm">
+        <h2 className="mb-3 text-lg font-medium">Billing</h2>
+        <p className="mb-4 text-sm text-gray-600">
+          You can manage your subscription from the customer portal.
+        </p>
+        <a
+          href="/api/billing/portal"
+          className="inline-block rounded-md border px-4 py-2 hover:bg-gray-50"
         >
-          <option value="en">English</option>
-          <option value="es">Español</option>
-          <option value="pa">ਪੰਜਾਬੀ (Punjabi)</option>
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block text-sm font-medium">
-          {dict('focus')}
-        </label>
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          value={form.complianceFocus}
-          onChange={(e) =>
-            setForm({ ...form, complianceFocus: e.target.value })
-          }
-          placeholder="IRS,DOT,FDA"
-        />
-      </div>
-
-      <button
-        disabled={saving}
-        className="rounded-md bg-black px-4 py-2 text-white disabled:opacity-60"
-      >
-        {saving ? 'Saving…' : dict('save')}
-      </button>
-
-      {msg && <p className="text-sm text-green-600">{msg}</p>}
-    </form>
+          Open customer portal
+        </a>
+      </section>
+    </main>
   );
 }
