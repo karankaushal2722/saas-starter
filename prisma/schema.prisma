@@ -1,62 +1,23 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = "file:./dev.db"
 }
 
 model User {
-  id        String    @id @default(cuid())
-  email     String    @unique
-  name      String?
-  role      UserRole  @default(MEMBER)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  orgs      OrgMember[]
-  cases     Case[]    @relation("CaseOwner")
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Profile fields
+  companyName     String? // e.g., "Kaushal Logistics LLC"
+  industry        String? // e.g., "Trucking", "Restaurant"
+  language        String? // e.g., "en", "es", "pa"
+  complianceFocus String? // e.g., "IRS,DOT,FDA" (comma-separated list)
 }
-
-enum UserRole { OWNER ADMIN MEMBER }
-
-model Organization {
-  id        String      @id @default(cuid())
-  name      String
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  members   OrgMember[]
-  clients   Client[]
-  cases     Case[]
-}
-
-model OrgMember {
-  id        String        @id @default(cuid())
-  orgId     String
-  userId    String
-  role      OrgRole       @default(MEMBER)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  org       Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([orgId, userId])
-}
-
-enum OrgRole { OWNER ADMIN MEMBER }
-
-model Client {
-  id        String       @id @default(cuid())
-  orgId     String
-  name      String
-  email     String?
-  phone     String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  cases     Case[]
-}
-
-model Case {
-  id          String        @id @default(cuid())
-  orgId
