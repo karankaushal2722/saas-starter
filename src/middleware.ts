@@ -1,24 +1,28 @@
 // src/middleware.ts
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
-  const uid = req.cookies.get('uid')?.value;
+  const supabase = createMiddlewareClient({ req, res });
+  const { data: { session } } = await supabase.auth.getSession();
 
-  if (!uid) {
-    const newUid = crypto.randomUUID();
-    res.cookies.set('uid', newUid, {
-      httpOnly: true,
-      path: '/',
-      sameSite: 'lax',
-      secure: true,
-      maxAge: 60 * 60 * 24 * 365, // 1 year
-    });
+  const isProtected =
+    req.nextUrl.pathname.startsWith("/dashboard") ||
+    req.nextUrl.pathname.startsWith("/billing") ||
+    req.nextUrl.pathname.startsWith("/settings"); // ← added
+
+  if (isProtected && !session) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/login";
+    url.searchParams.set("next", req.nextUrl.pathname);
+    return NextResponse.redirect(url);
   }
+
   return res;
 }
 
-// Run on everything except static assets
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ["/dashboard/:path*", "/billing/:path*", "/settings/:path*"], // ← added
 };
