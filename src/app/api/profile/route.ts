@@ -1,30 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getProfileByEmail, saveProfile } from "@/src/lib/db";
+import prisma from "@/lib/prisma"; // see lib/prisma.ts below
+import { cookies } from "next/headers";
 
+export const runtime = "nodejs";
+
+// GET /api/profile?email=someone@example.com
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const email = searchParams.get("email") ?? "";
-    if (!email) return NextResponse.json({ error: "email is required" }, { status: 400 });
+    const url = new URL(req.url);
+    const qpEmail = url.searchParams.get("email") ?? undefined;
 
-    const profile = await getProfileByEmail(email);
-    return NextResponse.json({ profile }, { status: 200 });
-  } catch (err: any) {
-    console.error("GET /api/profile error:", err);
-    return NextResponse.json({ error: err.message ?? "Server error" }, { status: 500 });
-  }
-}
+    // Try cookie first, fall back to query param
+    const cookieStore = cookies();
+    const cookieEmail = cookieStore.get("uid")?.value;
+    const email = cookieEmail || qpEmail;
 
-export async function POST(req: NextRequest) {
-  try {
-    const payload = await req.json();
-    if (!payload?.email) {
-      return NextResponse.json({ error: "email is required" }, { status: 400 });
+    if (!email) {
+      return NextResponse.json({ error: "No uid cookie or email query param" }, { status: 400 });
     }
-    const saved = await saveProfile(payload);
-    return NextResponse.json({ profile: saved }, { status: 200 });
+
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: {},
+      create: { email },
+    });
+
+    // Set a cookie so next calls don't need ?email
+    if (!cookieEmail) {
+      cookieStore.set("uid", email, { httpOnly: true, path: "/", sameSite: "lax", secure: true });
+    }
+
+    return NextResponse.json({ ok: true, user });
   } catch (err: any) {
-    console.error("POST /api/profile error:", err);
-    return NextResponse.json({ error: err.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json({ error: err?.message ?? "Server error" }, { status: 500 });
   }
 }
