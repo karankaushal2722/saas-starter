@@ -1,36 +1,35 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL") // Supabase or Vercel Postgres
+  url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String?  @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Profile {
+  id                   String   @id @default(uuid())
+  email                String   @unique
+  companyName          String?
+  industry             String?
+  language             String?  @default("en")
+  complianceFocus      String?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  plan                 String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
-  // Tailored business profile
-  companyName     String?
-  industry        String? // e.g., "Trucking", "Restaurant"
-  language        String? @default("en") // "en", "es", "pa", etc.
-  complianceFocus String? // e.g., "IRS,DOT,FDA"
-
-  auditLogs AuditLog[]
+  @@index([email])
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String
-  action    String
-  details   Json?
+  id        String   @id @default(uuid())
+  email     String?
+  event     String
+  data      Json?
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId, createdAt])
+  @@index([email])
+  @@index([event])
 }

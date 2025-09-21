@@ -1,4 +1,3 @@
-// src/app/billing/checkout/success/page.tsx
 export default function SuccessPage() {
   return (
     <main style={{ padding: 24 }}>

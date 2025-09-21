@@ -1,11 +1,23 @@
-// src/lib/supabaseServer.ts
-// Server-side helper for Supabase in Next.js server components / routes
-
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-// If you generated DB types, update the path below. If not, the `any` fallback is used.
-import type { Database } from "@/types/supabase";
 
-export function createServerClient() {
-  return createServerComponentClient<Database>({ cookies });
+export function supabaseServer() {
+  const cookieStore = cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: any) {
+          cookieStore.set({ name, value: "", ...options });
+        }
+      }
+    }
+  );
 }
