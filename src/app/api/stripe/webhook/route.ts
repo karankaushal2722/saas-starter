@@ -2,65 +2,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-// Important: use Node, not Edge, so we can read the raw body
 export const runtime = "nodejs";
-// (optional but safe) avoid caching
 export const dynamic = "force-dynamic";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 if (!stripeSecretKey) {
   console.error("[Stripe webhook] STRIPE_SECRET_KEY is not set");
   throw new Error("STRIPE_SECRET_KEY is not set in environment variables.");
 }
 
-if (!webhookSecret) {
-  console.error("[Stripe webhook] STRIPE_WEBHOOK_SECRET is not set");
-  throw new Error("STRIPE_WEBHOOK_SECRET is not set in environment variables.");
-}
-
+// We still init Stripe so we can reuse types if needed
 const stripe = new Stripe(stripeSecretKey, {
   apiVersion: "2024-06-20",
 });
 
+/**
+ * IMPORTANT:
+ * This version does NOT verify the Stripe signature.
+ * ONLY use this in TEST / DEV mode while you get the rest of your app working.
+ * Before production, we will re-enable constructEvent + STRIPE_WEBHOOK_SECRET.
+ */
 export async function POST(req: NextRequest) {
-  const sig = req.headers.get("stripe-signature");
-
-  console.log("==== STRIPE WEBHOOK START ====");
-  console.log("[Stripe webhook] stripe-signature header:", sig);
-  console.log(
-    "[Stripe webhook] webhook secret prefix:",
-    webhookSecret.slice(0, 10) // safe to log only the first few chars
-  );
-
-  if (!sig) {
-    console.error("[Stripe webhook] Missing stripe-signature header");
-    return new NextResponse("Missing stripe-signature header", { status: 400 });
-  }
-
-  let event: Stripe.Event;
+  console.log("==== STRIPE WEBHOOK (NO-SIG) START ====");
 
   try {
-    // RAW body, do NOT call req.json() anywhere
-    const body = await req.text();
-    console.log("[Stripe webhook] Raw body length:", body.length);
+    const json = await req.json();
+    console.log("[Stripe webhook] Raw event JSON:", JSON.stringify(json, null, 2));
 
-    event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
-  } catch (err: any) {
-    console.error(
-      "[Stripe webhook] Signature verification failed:",
-      err?.message
-    );
-    return new NextResponse(
-      `Webhook Error: ${err?.message ?? "Signature verification failed"}`,
-      { status: 400 }
-    );
-  }
+    // In this “no-sig” mode, we trust the payload structure.
+    const event = json as Stripe.Event;
 
-  console.log("[Stripe webhook] Event received:", event.type);
+    console.log("[Stripe webhook] Event type:", event.type);
 
-  try {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -73,7 +47,7 @@ export async function POST(req: NextRequest) {
           "subscription=",
           session.subscription
         );
-        // TODO: update your DB with subscription info here
+        // TODO: update your DB with subscription info (user plan, status, etc.)
         break;
       }
 
@@ -84,9 +58,11 @@ export async function POST(req: NextRequest) {
           "[Stripe webhook] subscription event:",
           event.type,
           "id=",
-          subscription.id
+          subscription.id,
+          "status=",
+          subscription.status
         );
-        // TODO: update your DB here
+        // TODO: update DB subscription status for this customer
         break;
       }
 
@@ -94,10 +70,10 @@ export async function POST(req: NextRequest) {
         console.log("[Stripe webhook] Unhandled event type:", event.type);
     }
 
-    console.log("==== STRIPE WEBHOOK END ====");
+    console.log("==== STRIPE WEBHOOK (NO-SIG) END ====");
     return NextResponse.json({ received: true });
   } catch (err: any) {
-    console.error("[Stripe webhook] Handler error:", err);
+    console.error("[Stripe webhook] Error parsing / handling event:", err?.message);
     return new NextResponse("Webhook handler error", { status: 500 });
   }
 }
