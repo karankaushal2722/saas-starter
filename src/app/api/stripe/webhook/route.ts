@@ -10,10 +10,12 @@ const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 if (!stripeSecretKey) {
+  console.error("[Stripe webhook] STRIPE_SECRET_KEY is not set");
   throw new Error("STRIPE_SECRET_KEY is not set in environment variables.");
 }
 
 if (!webhookSecret) {
+  console.error("[Stripe webhook] STRIPE_WEBHOOK_SECRET is not set");
   throw new Error("STRIPE_WEBHOOK_SECRET is not set in environment variables.");
 }
 
@@ -25,6 +27,13 @@ const stripe = new Stripe(stripeSecretKey, {
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature");
 
+  console.log("[Stripe webhook] Incoming request");
+  console.log("[Stripe webhook] stripe-signature header:", sig);
+  console.log(
+    "[Stripe webhook] webhook secret prefix:",
+    webhookSecret?.slice(0, 10) // safe to log prefix only
+  );
+
   if (!sig) {
     console.error("[Stripe webhook] Missing stripe-signature header");
     return new NextResponse("Missing stripe-signature header", { status: 400 });
@@ -35,7 +44,9 @@ export async function POST(req: NextRequest) {
   try {
     // ✅ VERY IMPORTANT: raw body, NOT req.json()
     const body = await req.text();
-    event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+    console.log("[Stripe webhook] Raw body length:", body.length);
+
+    event = stripe.webhooks.constructEvent(body, sig, webhookSecret!);
   } catch (err: any) {
     console.error("[Stripe webhook] Signature verification failed:", err.message);
     return new NextResponse(
@@ -54,6 +65,7 @@ export async function POST(req: NextRequest) {
 
         console.log(
           "[Stripe webhook] checkout.session.completed:",
+          "id:",
           session.id,
           "customer:",
           session.customer,
@@ -61,8 +73,7 @@ export async function POST(req: NextRequest) {
           session.subscription
         );
 
-        // TODO: look up the user by session.client_reference_id or metadata
-        // and store/update their subscription in your DB.
+        // TODO: update your own DB with subscription info here
 
         break;
       }
@@ -70,9 +81,13 @@ export async function POST(req: NextRequest) {
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const subscription = event.data.object as Stripe.Subscription;
-        console.log("[Stripe webhook] subscription event:", event.type, subscription.id);
-
-        // TODO: update subscription status in your DB.
+        console.log(
+          "[Stripe webhook] subscription event:",
+          event.type,
+          "id:",
+          subscription.id
+        );
+        // TODO: update subscription in your DB
         break;
       }
 
@@ -81,7 +96,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Stripe just needs a 2xx to consider the webhook delivered.
     return NextResponse.json({ received: true });
   } catch (err: any) {
     console.error("[Stripe webhook] Handler error:", err);
