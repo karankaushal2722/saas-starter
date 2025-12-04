@@ -1,37 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma"; // see lib/prisma.ts below
 import { cookies } from "next/headers";
+import prisma from "@/lib/prisma";
 
-export const runtime = "nodejs";
+export const runtime = "nodejs"; // needed for Prisma
 
-// GET /api/profile?email=someone@example.com
-export async function GET(req: NextRequest) {
-  try {
-    const url = new URL(req.url);
-    const qpEmail = url.searchParams.get("email") ?? undefined;
+type SaveProfileInput = {
+  businessName: string;
+  industry: string;
+  primaryLanguage: string;
+  otherLanguages?: string;
+  country?: string;
+};
 
-    // Try cookie first, fall back to query param
-    const cookieStore = cookies();
-    const cookieEmail = cookieStore.get("uid")?.value;
-    const email = cookieEmail || qpEmail;
+function getEmailFromCookies() {
+  const cookieStore = cookies();
+  const email = cookieStore.get("uid")?.value; // we set this at auth time
+  return email ?? null;
+}
 
-    if (!email) {
-      return NextResponse.json({ error: "No uid cookie or email query param" }, { status: 400 });
-    }
+export async function GET(_req: NextRequest) {
+  const email = getEmailFromCookies();
 
-    const user = await prisma.user.upsert({
-      where: { email },
-      update: {},
-      create: { email },
-    });
-
-    // Set a cookie so next calls don't need ?email
-    if (!cookieEmail) {
-      cookieStore.set("uid", email, { httpOnly: true, path: "/", sameSite: "lax", secure: true });
-    }
-
-    return NextResponse.json({ ok: true, user });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? "Server error" }, { status: 500 });
+  if (!email) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
+
+  const profile = await prisma.profile.findUnique({
+    where: { email },
+  });
+
+  return NextResponse.json({ profile }, { status: 200 });
+}
+
+export async function POST(req: NextRequest) {
+  const email = getEmailFromCookies();
+
+  if (!email) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const body = (await req.json()) as SaveProfileInput;
+
+  const profile = await prisma.profile.upsert({
+    where: { email },
+    update: {
+      businessName: body.businessName || null,
+      industry: body.industry || null,
+      primaryLanguage: body.primaryLanguage || null,
+      otherLanguages: body.otherLanguages || null,
+      country: body.country || null,
+    },
+    create: {
+      email,
+      businessName: body.businessName || null,
+      industry: body.industry || null,
+      primaryLanguage: body.primaryLanguage || null,
+      otherLanguages: body.otherLanguages || null,
+      country: body.country || null,
+    },
+  });
+
+  return NextResponse.json({ profile }, { status: 200 });
 }

@@ -1,37 +1,39 @@
-import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
+// src/app/api/billing/checkout/route.ts
+export const runtime = 'nodejs';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2023-10-16"
-});
+import { NextRequest, NextResponse } from 'next/server';
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 function resolveAppUrl(req: NextRequest): string {
-  const h = req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") ?? "https";
-  return process.env.NEXT_PUBLIC_BASE_URL ?? `${proto}://${h}`;
-}
-
-export async function GET() {
-  return NextResponse.json({ ok: true, route: "/api/billing/checkout" });
+  const host = req.headers.get('host') ?? 'localhost:3000';
+  const proto = process.env.VERCEL ? 'https' : 'http';
+  return `${proto}://${host}`;
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json().catch(() => ({}));
-    const appUrl = resolveAppUrl(req);
+    const { priceId, customerId } = await req.json();
+
+    if (!priceId) {
+      return NextResponse.json({ error: 'Missing priceId' }, { status: 400 });
+    }
+
+    const origin = resolveAppUrl(req);
 
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      // Attach your test price:
-      line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
-      success_url: `${appUrl}/billing/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/billing/checkout/cancel`,
-      customer_email: email
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${origin}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/billing/cancel`,
+      customer: customerId, // optional; pass when you have it
+      allow_promotion_codes: true,
     });
 
     return NextResponse.json({ url: session.url }, { status: 200 });
   } catch (err: any) {
-    console.error("checkout error:", err);
-    return NextResponse.json({ error: err.message ?? "Server error" }, { status: 500 });
+    console.error('Checkout error:', err?.message);
+    return NextResponse.json({ error: 'Checkout failed' }, { status: 500 });
   }
 }

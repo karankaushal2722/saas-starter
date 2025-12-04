@@ -1,37 +1,35 @@
-import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
+// src/app/api/billing/portal/route.ts
+export const runtime = 'nodejs';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2023-10-16"
-});
+import { NextRequest, NextResponse } from 'next/server';
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 function resolveAppUrl(req: NextRequest): string {
-  const h = req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") ?? "https";
-  return process.env.NEXT_PUBLIC_BASE_URL ?? `${proto}://${h}`;
-}
-
-export async function GET() {
-  return NextResponse.json({ ok: true, route: "/api/billing/portal" });
+  const host = req.headers.get('host') ?? 'localhost:3000';
+  const proto = process.env.VERCEL ? 'https' : 'http';
+  return `${proto}://${host}`;
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json();
+    const { customerId, returnUrl } = await req.json();
 
-    // Find or auto-create a customer by email for portal access
-    const customers = await stripe.customers.list({ email, limit: 1 });
-    const customer = customers.data[0] ?? await stripe.customers.create({ email });
-    const appUrl = resolveAppUrl(req);
+    if (!customerId) {
+      return NextResponse.json({ error: 'Missing customerId' }, { status: 400 });
+    }
+
+    const origin = resolveAppUrl(req);
 
     const portal = await stripe.billingPortal.sessions.create({
-      customer: customer.id,
-      return_url: appUrl
+      customer: customerId,
+      return_url: returnUrl ?? `${origin}/billing`,
     });
 
     return NextResponse.json({ url: portal.url }, { status: 200 });
   } catch (err: any) {
-    console.error("portal error:", err);
-    return NextResponse.json({ error: err.message ?? "Server error" }, { status: 500 });
+    console.error('Portal error:', err?.message);
+    return NextResponse.json({ error: 'Portal failed' }, { status: 500 });
   }
 }

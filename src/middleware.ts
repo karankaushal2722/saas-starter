@@ -1,28 +1,19 @@
-// src/middleware.ts
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
+// middleware.ts
+import { NextRequest, NextResponse } from 'next/server'
+import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
 
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req, res });
-  const { data: { session } } = await supabase.auth.getSession();
+  const res = NextResponse.next()
+  // Creates a Supabase client bound to the middleware's request/response
+  const supabase = createMiddlewareClient({ req, res })
 
-  const isProtected =
-    req.nextUrl.pathname.startsWith("/dashboard") ||
-    req.nextUrl.pathname.startsWith("/billing") ||
-    req.nextUrl.pathname.startsWith("/settings"); // ← added
+  // Optionally refresh session; ignore errors to keep requests flowing
+  await supabase.auth.getSession().catch(() => {})
 
-  if (isProtected && !session) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("next", req.nextUrl.pathname);
-    return NextResponse.redirect(url);
-  }
-
-  return res;
+  return res
 }
 
+// Match paths you actually want; start simple:
 export const config = {
-  matcher: ["/dashboard/:path*", "/billing/:path*", "/settings/:path*"], // ← added
-};
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+}

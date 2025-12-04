@@ -2,36 +2,26 @@
 
 import React, { useState, ChangeEvent, FormEvent } from "react";
 
-const LANGUAGES = [
-  "English",
-  "Spanish",
-  "Punjabi",
-  "Hindi",
-  "Arabic",
-  "Chinese",
-  "Same language as my question",
-];
+const LANGUAGES = ["English", "Spanish", "Punjabi", "Hindi", "Arabic", "Chinese"];
 
 export default function DashboardPage() {
-  // ===== Q&A STATE =====
-  const [qaIndustry, setQaIndustry] = useState("");
-  const [qaLanguage, setQaLanguage] = useState("Same language as my question");
+  // Q&A state
+  const [industry, setIndustry] = useState("");
+  const [language, setLanguage] = useState("English");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
   const [qaError, setQaError] = useState<string | null>(null);
 
-  // ===== DOCUMENT REVIEW STATE =====
+  // Document review state
   const [docIndustry, setDocIndustry] = useState("");
-  const [docLanguage, setDocLanguage] = useState("Same language as my question");
-  const [docFileName, setDocFileName] = useState<string | null>(null);
+  const [docLanguage, setDocLanguage] = useState("English");
   const [docText, setDocText] = useState("");
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [docResult, setDocResult] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
 
-  // ---------- Q&A SUBMIT ----------
+  // ---------- Q&A ----------
   const handleAsk = async (e: FormEvent) => {
     e.preventDefault();
     setQaError(null);
@@ -50,23 +40,18 @@ export default function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question,
-          industry: qaIndustry,
-          language: qaLanguage,
+          industry,
+          language,
         }),
       });
 
       const data = await res.json();
 
-      if (!res.ok) {
+      if (!res.ok || !data.ok) {
         throw new Error(data.error || "Something went wrong.");
       }
 
-      const answerText =
-        data.answer ??
-        data.message ??
-        (typeof data === "string" ? data : JSON.stringify(data));
-
-      setAnswer(answerText);
+      setAnswer(data.answer || "No answer returned.");
     } catch (err: any) {
       console.error(err);
       setQaError(err.message || "Error calling legal assistant.");
@@ -75,52 +60,33 @@ export default function DashboardPage() {
     }
   };
 
-  // ---------- FILE CHANGE (DOC REVIEW) ----------
+  // ---------- DOCUMENT REVIEW ----------
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     setDocError(null);
     setDocResult(null);
-    setImageBase64(null);
-    setDocText("");
 
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setDocFileName(file.name);
-
-    const isImage = file.type.startsWith("image/");
-
-    if (isImage) {
-      // Read as base64 data URL for image (JPG/PNG/…)
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        setImageBase64(result);
-        setDocText(""); // no raw text for images
-      };
-      reader.readAsDataURL(file);
-    } else {
-      // Treat as text-based document (txt, md, docx converted, etc.)
-      const reader = new FileReader();
-      reader.onload = () => {
-        const text = (reader.result as string) || "";
-        if (!text.trim()) {
-          setDocError("This file appears to be empty or unreadable as text.");
-          return;
-        }
-        setDocText(text);
-        setImageBase64(null);
-      };
-      reader.readAsText(file);
+    try {
+      const text = await file.text();
+      if (!text.trim()) {
+        setDocError("This file appears to be empty or unreadable as text.");
+        return;
+      }
+      setDocText(text);
+    } catch (err: any) {
+      console.error(err);
+      setDocError("Could not read that file. Try a .txt file or paste the text.");
     }
   };
 
-  // ---------- DOC REVIEW SUBMIT ----------
   const handleReview = async (e: FormEvent) => {
     e.preventDefault();
     setDocError(null);
     setDocResult(null);
 
-    if (!docText.trim() && !imageBase64) {
+    if (!docText.trim()) {
       setDocError("Upload a document or paste its text first.");
       return;
     }
@@ -128,26 +94,19 @@ export default function DashboardPage() {
     try {
       setDocLoading(true);
 
-      const body: any = {
-        industry: docIndustry,
-        language: docLanguage,
-      };
-
-      if (imageBase64) {
-        body.imageBase64 = imageBase64;
-      } else {
-        body.documentText = docText;
-      }
-
       const res = await fetch("/api/legal/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          documentText: docText,
+          industry: docIndustry,
+          language: docLanguage,
+        }),
       });
 
       const data = await res.json();
 
-      if (!res.ok || data.ok === false) {
+      if (!res.ok || !data.ok) {
         throw new Error(data.error || "Something went wrong.");
       }
 
@@ -160,13 +119,14 @@ export default function DashboardPage() {
     }
   };
 
+  // ---------- UI ----------
   return (
     <div style={{ maxWidth: 900, margin: "40px auto", padding: "0 16px" }}>
       <h1>Your Legal Copilot Dashboard</h1>
       <p>
         Ask questions about contracts, compliance, or legal risks for your small
-        business — in your own language. Then upload or paste documents (even
-        images) to get a clear, plain-language review.
+        business — in your own language. Then upload or paste documents to get a
+        clear, plain-language review.
       </p>
 
       {/* ===== Q&A SECTION ===== */}
@@ -180,10 +140,10 @@ export default function DashboardPage() {
               <br />
               <input
                 type="text"
-                value={qaIndustry}
-                onChange={(e) => setQaIndustry(e.target.value)}
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
                 style={{ width: "100%", padding: 8 }}
-                placeholder="Restaurant, trucking company, barber shop, etc."
+                placeholder="trucking company, restaurant, store, etc."
               />
             </label>
           </div>
@@ -193,8 +153,8 @@ export default function DashboardPage() {
               Answer language
               <br />
               <select
-                value={qaLanguage}
-                onChange={(e) => setQaLanguage(e.target.value)}
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
                 style={{ width: "100%", padding: 8 }}
               >
                 {LANGUAGES.map((lang) => (
@@ -215,7 +175,7 @@ export default function DashboardPage() {
                 onChange={(e) => setQuestion(e.target.value)}
                 rows={4}
                 style={{ width: "100%", padding: 8 }}
-                placeholder="Example: I run a small restaurant. What should be in a vendor contract so I am protected if deliveries are late?"
+                placeholder="Example: What are the IFTA requirements for my trucking company?"
               />
             </label>
           </div>
@@ -249,9 +209,9 @@ export default function DashboardPage() {
       <section style={{ marginTop: 32, marginBottom: 48 }}>
         <h2>Review a document</h2>
         <p style={{ maxWidth: 700 }}>
-          Upload a contract, notice, letter, or agreement (including a photo of
-          the document), or paste the text. We’ll summarize it and highlight
-          risks, obligations, and next steps in simple language.
+          Upload a contract, notice, letter, or agreement (plain-text works
+          best). We’ll summarize it and highlight risks, obligations, and next
+          steps in simple language.
         </p>
 
         <form onSubmit={handleReview}>
@@ -264,7 +224,7 @@ export default function DashboardPage() {
                 value={docIndustry}
                 onChange={(e) => setDocIndustry(e.target.value)}
                 style={{ width: "100%", padding: 8 }}
-                placeholder="Trucking company, restaurant, barbershop, etc."
+                placeholder="trucking company, restaurant, store, etc."
               />
             </label>
           </div>
@@ -289,19 +249,14 @@ export default function DashboardPage() {
 
           <div style={{ marginBottom: 12 }}>
             <label>
-              Upload document (images or text-based files)
+              Upload document (works best with .txt or other text-based files)
               <br />
               <input
                 type="file"
-                accept="image/*,.txt,.md,.rtf,.doc,.docx,.pdf"
+                accept=".txt,.md,.rtf,.doc,.docx,.pdf"
                 onChange={handleFileChange}
               />
             </label>
-            {docFileName && (
-              <p style={{ fontSize: 12, marginTop: 4 }}>
-                Selected file: {docFileName}
-              </p>
-            )}
           </div>
 
           <div style={{ marginBottom: 12 }}>
