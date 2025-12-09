@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export const runtime = "nodejs";        // make sure we run in Node, not Edge
+export const runtime = "nodejs";        // run in Node, not Edge
 export const dynamic = "force-dynamic"; // disable caching for this route
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
   if (demoMode) {
-    // 🔹 DEMO MODE: skip signature verification completely
+    // DEMO MODE: skip signature verification completely
     try {
       const json = await req.json();
       console.log(
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       });
     }
   } else {
-    // 🔹 REAL MODE: verify the Stripe signature
+    // REAL MODE: verify the Stripe signature
     const sig = req.headers.get("stripe-signature");
     console.log("[Stripe webhook] stripe-signature header:", sig);
 

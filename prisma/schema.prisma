@@ -1,65 +1,73 @@
-// prisma/schema.prisma
+// -----------------------------------------------------------------------------
+//  SCHEMAS + DATABASE
+// -----------------------------------------------------------------------------
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+
+  // REQUIRED for Supabase:
+  // public.profiles → auth.users (foreign key)
+  schemas = ["public", "auth"]
+}
 
 generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider          = "postgresql"
-  url               = env("DATABASE_URL")
-  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-}
-
-/// Users of your application
+// -----------------------------------------------------------------------------
+//  USER MODEL  (maps to public.profiles, NOT auth.users — that is managed by Supabase)
+// -----------------------------------------------------------------------------
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  fullName  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(uuid())
+  email         String   @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Stripe Billing Fields
+  stripeCustomerId   String? @unique
+  stripeSubscriptionId String?
+  stripePriceId      String?
+  stripeCurrentPeriodEnd DateTime?
 
   // Relations
-  subscriptions Subscription[]
-  featureFlags  FeatureFlag[]
-  documents     Document[]
+  documents    Document[]
+  featureFlags FeatureFlag[]
+
+  @@map("profiles")         // Supabase public.profiles table
+  @@schema("public")
 }
 
-/// Stripe subscription records stored for each user
-model Subscription {
-  id               String      @id @default(uuid())
-  stripeId         String      @unique
-  stripeStatus     String
-  priceId          String
-  customerId       String
-  currentPeriodEnd DateTime?
-
-  userId           String
-  user             User        @relation(fields: [userId], references: [id])
-
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-}
-
-/// Feature flags per user (optional, but safe to keep)
-model FeatureFlag {
-  id        String   @id @default(uuid())
-  userId    String
-  key       String
-  value     Boolean  @default(false)
-
-  user      User     @relation(fields: [userId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-/// Stored documents (from your PDF / document analyzer)
+// -----------------------------------------------------------------------------
+//  DOCUMENT MODEL
+// -----------------------------------------------------------------------------
 model Document {
   id        String   @id @default(uuid())
-  userId    String
   title     String
   content   String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user      User     @relation(fields: [userId], references: [id])
+  // Relation
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  @@map("documents")        // public.documents
+  @@schema("public")
+}
+
+// -----------------------------------------------------------------------------
+//  FEATURE FLAG MODEL
+// -----------------------------------------------------------------------------
+model FeatureFlag {
+  id        String   @id @default(uuid())
+  flag      String
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relation
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  @@map("feature_flags")    // public.feature_flags
+  @@schema("public")
 }
