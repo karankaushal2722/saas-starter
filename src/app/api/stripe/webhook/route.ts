@@ -113,4 +113,8 @@ export async function POST(req: NextRequest) {
 
     console.log("==== STRIPE WEBHOOK END ====");
     return NextResponse.json({ received: true });
-  } catch (er
+  } catch (err: any) {
+    console.error("[Stripe webhook] Handler error:", err);
+    return new NextResponse("Webhook handler error", { status: 500 });
+  }
+}
