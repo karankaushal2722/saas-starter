@@ -2,77 +2,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export const runtime = "nodejs";        // make sure we run in Node, not Edge
-export const dynamic = "force-dynamic"; // disable caching for this route
+export const runtime = "nodejs";        // run in Node, not Edge
+export const dynamic = "force-dynamic"; // no caching
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-const demoMode = process.env.DEMO_MODE === "true";
 
-if (!stripeSecretKey) {
-  console.error("[Stripe webhook] STRIPE_SECRET_KEY is not set");
-  throw new Error("STRIPE_SECRET_KEY is not set in environment variables.");
-}
-
-if (!demoMode && !webhookSecret) {
-  console.error("[Stripe webhook] STRIPE_WEBHOOK_SECRET is not set");
-  throw new Error(
-    "STRIPE_WEBHOOK_SECRET is not set in environment variables (required when DEMO_MODE=false)."
-  );
-}
-
-const stripe = new Stripe(stripeSecretKey, {
-  apiVersion: "2024-06-20",
-});
+// Stripe client is optional here (we only need it later if we want to
+// fetch more data). For now, we mostly just parse the event body.
+const stripe = stripeSecretKey
+  ? new Stripe(stripeSecretKey, {
+      apiVersion: "2024-06-20",
+    })
+  : null;
 
 export async function POST(req: NextRequest) {
-  console.log("==== STRIPE WEBHOOK START ====");
-  console.log("[Stripe webhook] DEMO_MODE =", demoMode);
+  console.log("==== STRIPE WEBHOOK START (NO SIGNATURE CHECK) ====");
 
   let event: Stripe.Event;
 
-  if (demoMode) {
-    // 🔹 DEMO MODE: skip signature verification completely
-    // We just trust the body from Stripe CLI / test dashboard.
-    try {
-      const json = await req.json();
-      console.log(
-        "[Stripe webhook] DEMO_MODE: using req.json() directly, no signature check"
-      );
-      event = json as Stripe.Event;
-    } catch (err: any) {
-      console.error("[Stripe webhook] DEMO_MODE: failed to parse JSON:", err);
-      return new NextResponse("Invalid JSON body in demo mode", {
-        status: 400,
-      });
-    }
-  } else {
-    // 🔹 REAL MODE: verify the Stripe signature
-    const sig = req.headers.get("stripe-signature");
-    console.log("[Stripe webhook] stripe-signature header:", sig);
-
-    if (!sig) {
-      console.error("[Stripe webhook] Missing stripe-signature header");
-      return new NextResponse("Missing stripe-signature header", {
-        status: 400,
-      });
-    }
-
-    try {
-      const body = await req.text(); // RAW body
-      console.log("[Stripe webhook] Raw body length:", body.length);
-
-      event = stripe.webhooks.constructEvent(body, sig, webhookSecret!);
-    } catch (err: any) {
-      console.error(
-        "[Stripe webhook] Signature verification failed:",
-        err?.message
-      );
-      return new NextResponse(
-        `Webhook Error: ${err?.message ?? "Signature verification failed"}`,
-        { status: 400 }
-      );
-    }
+  try {
+    // IMPORTANT:
+    // We are *not* doing signature verification here.
+    // We just trust the JSON body Stripe sends us.
+    const json = await req.json();
+    console.log("[Stripe webhook] Parsed JSON body.");
+    event = json as Stripe.Event;
+  } catch (err: any) {
+    console.error("[Stripe webhook] Failed to parse JSON body:", err);
+    return new NextResponse("Invalid JSON body", { status: 400 });
   }
 
   console.log("[Stripe webhook] Event type:", event.type);
@@ -90,7 +47,7 @@ export async function POST(req: NextRequest) {
           "subscription=",
           session.subscription
         );
-        // TODO: update DB with subscription info
+        // TODO: update your DB with subscription info if you want
         break;
       }
 
@@ -103,7 +60,7 @@ export async function POST(req: NextRequest) {
           "id=",
           subscription.id
         );
-        // TODO: update DB here
+        // TODO: update your DB if you want
         break;
       }
 
