@@ -7,38 +7,59 @@ generator client {
 datasource db {
   provider          = "postgresql"
   url               = env("DATABASE_URL")
-  directUrl         = env("DIRECT_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-
-  // 👇 list all Postgres schemas you’re using in models
-  schemas = ["public", "auth"]
 }
 
-
-model Profile {
+/// Users of your application
+model User {
   id        String   @id @default(uuid())
   email     String   @unique
-  fullName  String?  @map("full_name")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  fullName  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // ===== BizGuard billing / subscription fields =====
-  /// Current BizGuard plan for this user.
-  /// "free" | "business" | "business_pro"
-  plan String @default("free")
+  // Relations
+  subscriptions Subscription[]
+  featureFlags  FeatureFlag[]
+  documents     Document[]
+}
 
-  /// Stripe customer ID (cus_xxx)
-  stripeCustomerId String? @map("stripe_customer_id")
+/// Stripe subscription records stored for each user
+model Subscription {
+  id               String      @id @default(uuid())
+  stripeId         String      @unique
+  stripeStatus     String
+  priceId          String
+  customerId       String
+  currentPeriodEnd DateTime?
 
-  /// Stripe subscription ID (sub_xxx)
-  stripeSubscriptionId String? @map("stripe_subscription_id")
+  userId           String
+  user             User        @relation(fields: [userId], references: [id])
 
-  /// Stripe subscription status ("active", "trialing", "canceled", etc.)
-  subscriptionStatus String? @map("subscription_status")
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+}
 
-  /// End of current billing period
-  subscriptionCurrentPeriodEnd DateTime? @map("subscription_current_period_end")
+/// Feature flags per user (optional, but safe to keep)
+model FeatureFlag {
+  id        String   @id @default(uuid())
+  userId    String
+  key       String
+  value     Boolean  @default(false)
 
-  @@map("profiles")
-  @@schema("public")
+  user      User     @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Stored documents (from your PDF / document analyzer)
+model Document {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  content   String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
 }
