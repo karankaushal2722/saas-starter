@@ -1,159 +1,116 @@
 // src/app/api/analyze-document/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import OpenAI from "openai";
-import pdfParse from "pdf-parse";
-import prisma from "@/lib/prisma";
+import prisma from "@/lib/prisma"; // works now because lib/prisma has a default export
 
-export const runtime = "nodejs";
+export const runtime = "nodejs";        // needed for Buffer / pdf-parse
+export const dynamic = "force-dynamic"; // no caching
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-// Helper: get user email from cookie (same way we used "uid" elsewhere)
-function getEmailFromCookies() {
-  const cookieStore = cookies();
-  return cookieStore.get("uid")?.value ?? null;
-}
-
-// Limit how much text we send to the AI
-function trimTextForModel(text: string, maxChars = 12000) {
-  if (text.length <= maxChars) return text;
-  return text.slice(0, maxChars) + "\n\n[Document truncated for length]";
+function bufferToUtf8(buffer: ArrayBuffer): string {
+  return new TextDecoder("utf-8").decode(buffer);
 }
 
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const file = formData.get("file");
 
-    if (!file || !(file instanceof File)) {
+    const file = formData.get("file") as File | null;
+    const industry = (formData.get("industry") as string) || "";
+    const language = (formData.get("language") as string) || "English";
+    const userQuestion = (formData.get("question") as string) || "";
+
+    if (!file) {
       return NextResponse.json(
         { ok: false, error: "No file uploaded." },
         { status: 400 }
       );
     }
 
-    // Basic size limit (5MB)
-    const sizeInBytes = file.size ?? 0;
-    const maxSizeBytes = 5 * 1024 * 1024;
-    if (sizeInBytes > maxSizeBytes) {
-      return NextResponse.json(
-        { ok: false, error: "File too large. Max 5MB." },
-        { status: 400 }
-      );
-    }
+    // Read file into memory
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    const fileName = file.name || "document";
-    const lowerName = fileName.toLowerCase();
+    let extractedText = "";
 
-    let textContent = "";
+    // ---- PDF handling via dynamic import of pdf-parse ----
+    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      const pdfParseModule = await import("pdf-parse");
+      const pdfParse: any =
+        (pdfParseModule as any).default ?? (pdfParseModule as any);
 
-    if (lowerName.endsWith(".pdf")) {
-      // Parse PDF
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const pdfData = await pdfParse(buffer);
-      textContent = pdfData.text || "";
+      const parsed = await pdfParse(buffer);
+      extractedText = parsed.text || "";
     } else {
-      // Fallback: treat as text file
-      textContent = await file.text();
+      // Fallback: treat as UTF-8 text (works for .txt, some docx exports, etc.)
+      extractedText = bufferToUtf8(arrayBuffer);
     }
 
-    if (!textContent.trim()) {
+    if (!extractedText.trim()) {
       return NextResponse.json(
-        { ok: false, error: "Could not extract any text from the document." },
+        {
+          ok: false,
+          error:
+            "I couldn't read any text from this file. Please try a different format (PDF or text).",
+        },
         { status: 400 }
       );
     }
 
-    // Get user profile context (industry / language) if available
-    const email = getEmailFromCookies();
-    let profileContext = "";
-    let userLanguage = "en";
+    const systemPrompt = `
+You are a careful but plain-language legal assistant for immigrant-owned small businesses.
+You DO NOT give final legal advice. You explain risk, issues, and next steps in simple language.
 
-    if (email) {
-      const profile = await prisma.profile.findUnique({
-        where: { email },
-      });
+Business industry: ${industry || "not specified"}.
+Answer language: ${language || "English"}.
 
-      if (profile) {
-        const pieces: string[] = [];
+For the document you receive, respond with:
 
-        if (profile.businessName) pieces.push(`Business name: ${profile.businessName}`);
-        if (profile.industry) pieces.push(`Industry: ${profile.industry}`);
-        if (profile.country) pieces.push(`Country: ${profile.country}`);
-        if (profile.primaryLanguage) {
-          userLanguage = profile.primaryLanguage;
-          pieces.push(`Preferred language code: ${profile.primaryLanguage}`);
-        }
+1. Short Summary (3–5 bullet points)
+2. Key Risks / Red Flags
+3. Obligations or Deadlines
+4. Suggested Questions to Ask a Lawyer
+5. Plain-language Next Steps
 
-        if (pieces.length > 0) {
-          profileContext = pieces.join(" | ");
-        }
-      }
+If the user asked a specific question, answer it in that context as well.
+`.trim();
+
+    const userPrompt = `
+Here is the document content:
+
+"""${extractedText.slice(0, 12000)}"""
+
+User question (optional): ${
+      userQuestion || "No specific question provided. Just analyze the document."
     }
-
-    const trimmed = trimTextForModel(textContent);
-
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { ok: false, error: "Server missing OPENAI_API_KEY." },
-        { status: 500 }
-      );
-    }
+`.trim();
 
     const completion = await openai.chat.completions.create({
-      model: MODEL,
+      model: "gpt-4o-mini",
       messages: [
-        {
-          role: "system",
-          content: [
-            "You are an AI assistant helping immigrant-owned small businesses understand documents such as contracts, leases, notices, and legal letters.",
-            "You are NOT a lawyer and your answers are NOT legal advice. Always include a short disclaimer at the end.",
-            "Focus on: obligations, rights, deadlines, financial risks, compliance issues, and any red flags.",
-            "Explain things in clear, simple language. Assume the user is a non-lawyer.",
-            "If the user has an industry or country specified, consider that in your analysis but do NOT fabricate specific local laws.",
-            "If the user prefers a non-English language, answer in that language.",
-          ].join(" "),
-        },
-        {
-          role: "user",
-          content: [
-            profileContext ? `User profile context: ${profileContext}` : "No extra profile context.",
-            `User preferred language code (if known): ${userLanguage}`,
-            `Document name: ${fileName}`,
-            "Here is the document text. Please:",
-            "- Summarize the document in a few bullet points.",
-            "- List key obligations and responsibilities.",
-            "- Highlight any deadlines or time-sensitive items.",
-            "- Point out any sections that might be risky or unfair to a small business owner.",
-            "- Suggest questions the user should ask a real lawyer.",
-            "",
-            "Document text:",
-            trimmed,
-          ].join("\n"),
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
       ],
-      temperature: 0.3,
-      max_tokens: 1000,
+      temperature: 0.2,
     });
 
-    const analysis =
+    const content =
       completion.choices[0]?.message?.content ||
       "Sorry, I could not generate an analysis.";
 
-    return NextResponse.json({ ok: true, analysis }, { status: 200 });
-  } catch (error: any) {
-    console.error("analyze-document error:", error);
+    // Optional: log something to Prisma, if you want
+    // await prisma.documentAnalysis.create({ data: { ... } });
+
+    return NextResponse.json({ ok: true, analysis: content });
+  } catch (err: any) {
+    console.error("[analyze-document] error:", err);
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error?.message || "Something went wrong while analyzing the document.",
+        error: err?.message || "Unknown error while analyzing document.",
       },
       { status: 500 }
     );

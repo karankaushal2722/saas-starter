@@ -1,64 +1,31 @@
+// src/app/api/profile/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import prisma from "@/lib/prisma";
 
-export const runtime = "nodejs"; // needed for Prisma
-
-type SaveProfileInput = {
-  businessName: string;
-  industry: string;
-  primaryLanguage: string;
-  otherLanguages?: string;
-  country?: string;
-};
-
-function getEmailFromCookies() {
-  const cookieStore = cookies();
-  const email = cookieStore.get("uid")?.value; // we set this at auth time
-  return email ?? null;
-}
+export const runtime = "nodejs";        // run in Node, not Edge
+export const dynamic = "force-dynamic"; // no caching
 
 export async function GET(_req: NextRequest) {
-  const email = getEmailFromCookies();
+  try {
+    // In your Next version, cookies() returns a Promise-like object,
+    // so we MUST await it.
+    const cookieStore = await cookies();
+    const uid = cookieStore.get("uid")?.value ?? null;
 
-  if (!email) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    if (!uid) {
+      return NextResponse.json(
+        { ok: false, error: "Not authenticated (uid cookie missing)." },
+        { status: 401 }
+      );
+    }
+
+    // For now we just return the uid.
+    return NextResponse.json({ ok: true, uid });
+  } catch (err: any) {
+    console.error("[profile GET] error:", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? "Unknown error in /api/profile" },
+      { status: 500 }
+    );
   }
-
-  const profile = await prisma.profile.findUnique({
-    where: { email },
-  });
-
-  return NextResponse.json({ profile }, { status: 200 });
-}
-
-export async function POST(req: NextRequest) {
-  const email = getEmailFromCookies();
-
-  if (!email) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const body = (await req.json()) as SaveProfileInput;
-
-  const profile = await prisma.profile.upsert({
-    where: { email },
-    update: {
-      businessName: body.businessName || null,
-      industry: body.industry || null,
-      primaryLanguage: body.primaryLanguage || null,
-      otherLanguages: body.otherLanguages || null,
-      country: body.country || null,
-    },
-    create: {
-      email,
-      businessName: body.businessName || null,
-      industry: body.industry || null,
-      primaryLanguage: body.primaryLanguage || null,
-      otherLanguages: body.otherLanguages || null,
-      country: body.country || null,
-    },
-  });
-
-  return NextResponse.json({ profile }, { status: 200 });
 }

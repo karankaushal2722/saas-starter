@@ -9,11 +9,7 @@ if (!stripeSecretKey) {
   console.warn("STRIPE_SECRET_KEY is not set in environment variables.");
 }
 
-const stripe = stripeSecretKey
-  ? new Stripe(stripeSecretKey, {
-      apiVersion: "2024-06-20",
-    })
-  : null;
+const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 
 type BillingInterval = "month" | "year";
 type PlanId = "starter" | "business" | "business_pro";
