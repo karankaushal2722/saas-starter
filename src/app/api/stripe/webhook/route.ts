@@ -1,20 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-import { PrismaClient } from "@prisma/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const prisma = new PrismaClient();
-
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY!;
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 const demoMode = process.env.DEMO_MODE === "true";
 
-if (!stripeSecretKey) {
-  throw new Error("STRIPE_SECRET_KEY not set");
-}
+if (!stripeSecretKey) throw new Error("STRIPE_SECRET_KEY not set");
 
+// Only require webhook secret when NOT in demo mode
 if (!demoMode && !webhookSecret) {
   throw new Error("STRIPE_WEBHOOK_SECRET not set (required when DEMO_MODE=false)");
 }
@@ -29,23 +25,20 @@ export async function POST(req: NextRequest) {
 
   let event: Stripe.Event;
 
-  // -----------------------------
-  // DEMO MODE (no signature check)
-  // -----------------------------
   if (demoMode) {
+    // DEMO MODE: don't verify signature (dashboard resend / tools can break raw body)
     try {
       event = (await req.json()) as Stripe.Event;
       console.log("[Stripe webhook] DEMO_MODE: accepted event without signature verification");
     } catch (err: any) {
-      console.error("[Stripe webhook] DEMO_MODE invalid JSON:", err?.message);
+      console.error("[Stripe webhook] DEMO_MODE: invalid JSON:", err?.message);
       return new NextResponse("Invalid JSON", { status: 400 });
     }
   } else {
-    // -----------------------------
-    // REAL MODE (verify signature)
-    // -----------------------------
+    // REAL MODE: verify Stripe signature using raw request body
     const sig = req.headers.get("stripe-signature");
     if (!sig) {
+      console.error("[Stripe webhook] Missing stripe-signature header");
       return new NextResponse("Missing stripe-signature header", { status: 400 });
     }
 
@@ -61,120 +54,8 @@ export async function POST(req: NextRequest) {
 
   console.log("[Stripe webhook] Event type:", event.type);
 
-  // -----------------------------
-  // HANDLE EVENTS
-  // -----------------------------
-  try {
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-
-        const userId = session.metadata?.uid ?? null;
-        const customerId =
-          typeof session.customer === "string" ? session.customer : null;
-        const subscriptionId =
-          typeof session.subscription === "string" ? session.subscription : null;
-
-        if (!userId || !subscriptionId) {
-          console.warn("[Stripe webhook] Missing uid or subscriptionId");
-          break;
-        }
-
-        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-
-        const priceId =
-          subscription.items.data[0]?.price?.id ?? null;
-
-        // ✅ IMPORTANT FIX:
-        // Stripe no longer exposes current_period_end directly
-        const periodEnd =
-          subscription.current_period?.end
-            ? new Date(subscription.current_period.end * 1000)
-            : null;
-
-        await prisma.user.update({
-          where: { id: userId },
-          data: {
-            stripeCustomerId: customerId,
-            stripeSubscriptionId: subscriptionId,
-            stripePriceId: priceId,
-            stripeCurrentPeriodEnd: periodEnd,
-          },
-        });
-
-        console.log("[Stripe webhook] User billing updated:", userId);
-        break;
-      }
-
-      case "customer.subscription.updated":
-      case "customer.subscription.created": {
-        const subscription = event.data.object as Stripe.Subscription;
-
-        const customerId =
-          typeof subscription.customer === "string"
-            ? subscription.customer
-            : null;
-
-        if (!customerId) break;
-
-        const user = await prisma.user.findFirst({
-          where: { stripeCustomerId: customerId },
-        });
-
-        if (!user) break;
-
-        const priceId =
-          subscription.items.data[0]?.price?.id ?? null;
-
-        const periodEnd =
-          subscription.current_period?.end
-            ? new Date(subscription.current_period.end * 1000)
-            : null;
-
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            stripeSubscriptionId: subscription.id,
-            stripePriceId: priceId,
-            stripeCurrentPeriodEnd: periodEnd,
-          },
-        });
-
-        console.log("[Stripe webhook] Subscription synced for user:", user.id);
-        break;
-      }
-
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-
-        const customerId =
-          typeof subscription.customer === "string"
-            ? subscription.customer
-            : null;
-
-        if (!customerId) break;
-
-        await prisma.user.updateMany({
-          where: { stripeCustomerId: customerId },
-          data: {
-            stripeSubscriptionId: null,
-            stripePriceId: null,
-            stripeCurrentPeriodEnd: null,
-          },
-        });
-
-        console.log("[Stripe webhook] Subscription removed for customer:", customerId);
-        break;
-      }
-
-      default:
-        console.log("[Stripe webhook] Unhandled event type:", event.type);
-    }
-  } catch (err: any) {
-    console.error("[Stripe webhook] Handler error:", err?.message);
-    return new NextResponse("Webhook handler failed", { status: 500 });
-  }
-
+  // NOTE: Billing DB writes come later. For now we just ACK to stop retries.
   console.log("==== STRIPE WEBHOOK END ====");
+
   return NextResponse.json({ received: true });
 }
