@@ -5,95 +5,92 @@ import { PrismaClient } from "@prisma/client";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// -----------------------------------------------------------------------------
-// Prisma (singleton for Next.js)
-// -----------------------------------------------------------------------------
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
 const prisma =
-  globalForPrisma.prisma ??
+  (globalThis as any).prisma ||
   new PrismaClient({
     log: ["error", "warn"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+if (!(globalThis as any).prisma) (globalThis as any).prisma = prisma;
 
-// -----------------------------------------------------------------------------
-// Stripe
-// -----------------------------------------------------------------------------
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 const demoMode = process.env.DEMO_MODE === "true";
 
 if (!stripeSecretKey) throw new Error("STRIPE_SECRET_KEY not set");
+
+// Only require webhook secret when NOT in demo mode
 if (!demoMode && !webhookSecret) {
   throw new Error("STRIPE_WEBHOOK_SECRET not set (required when DEMO_MODE=false)");
 }
 
 const stripe = new Stripe(stripeSecretKey, {
-  // If TS complains on your machine, change this line to:
-  // apiVersion: process.env.STRIPE_API_VERSION as any,
   apiVersion: "2025-10-29.clover",
 });
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-function getSubscriptionPeriodEndUnix(subscription: Stripe.Subscription): number | null {
-  // Stripe types can differ by version; read both shapes safely.
-  const s: any = subscription;
+function pickUidFromEvent(event: Stripe.Event): string | null {
+  // We try a few common places where apps store the logged-in user id
+  const obj: any = (event.data as any)?.object;
 
-  if (typeof s.current_period_end === "number") return s.current_period_end;
-  if (typeof s.current_period?.end === "number") return s.current_period.end;
-
-  return null;
+  // checkout.session.completed often includes metadata
+  const meta = obj?.metadata || {};
+  return (
+    meta.uid ||
+    meta.userId ||
+    meta.profileId ||
+    obj?.client_reference_id ||
+    null
+  );
 }
 
-function getSubscriptionPriceId(subscription: Stripe.Subscription): string | null {
-  const s: any = subscription;
-  const priceId =
-    s.items?.data?.[0]?.price?.id ??
-    s.items?.data?.[0]?.plan?.id ??
-    null;
-  return typeof priceId === "string" ? priceId : null;
-}
-
-function getUidFromSession(session: Stripe.Checkout.Session): string | null {
-  const s: any = session;
-
-  // Prefer metadata.uid (best practice)
-  const uid =
-    s.metadata?.uid ??
-    s.client_reference_id ??
-    null;
-
-  return typeof uid === "string" && uid.length ? uid : null;
-}
-
-function getEmailFromSession(session: Stripe.Checkout.Session): string | null {
-  const s: any = session;
+async function findUserIdFallback(event: Stripe.Event): Promise<string | null> {
+  const obj: any = (event.data as any)?.object;
 
   const email =
-    s.customer_details?.email ??
-    s.customer_email ??
-    s.metadata?.email ??
+    obj?.customer_details?.email ||
+    obj?.customer_email ||
+    obj?.receipt_email ||
     null;
 
-  return typeof email === "string" && email.length ? email : null;
+  if (!email) return null;
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  return user?.id ?? null;
 }
 
-// -----------------------------------------------------------------------------
-// Webhook
-// -----------------------------------------------------------------------------
+async function upsertBillingOnUser(params: {
+  userId: string;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  stripePriceId?: string | null;
+  stripeCurrentPeriodEnd?: Date | null;
+}) {
+  const {
+    userId,
+    stripeCustomerId = null,
+    stripeSubscriptionId = null,
+    stripePriceId = null,
+    stripeCurrentPeriodEnd = null,
+  } = params;
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      stripeCustomerId,
+      stripeSubscriptionId,
+      stripePriceId,
+      stripeCurrentPeriodEnd,
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
   console.log("==== STRIPE WEBHOOK START ====");
   console.log("[Stripe webhook] DEMO_MODE =", demoMode);
 
   let event: Stripe.Event;
 
-  // ---------------------------
-  // DEMO MODE (no signature verify)
-  // ---------------------------
+  // 1) Parse + verify event
   if (demoMode) {
     try {
       const json = await req.json();
@@ -104,9 +101,6 @@ export async function POST(req: NextRequest) {
       return new NextResponse("Invalid JSON", { status: 400 });
     }
   } else {
-    // ---------------------------
-    // REAL MODE (verify signature with raw body)
-    // ---------------------------
     const sig = req.headers.get("stripe-signature");
     if (!sig) return new NextResponse("Missing stripe-signature header", { status: 400 });
 
@@ -115,99 +109,65 @@ export async function POST(req: NextRequest) {
     try {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
     } catch (err: any) {
-      console.error("[Stripe webhook] Signature verification failed:", err?.message);
+      console.error("[Stripe webhook] Signature verify failed:", err?.message);
       return new NextResponse(`Webhook error: ${err?.message}`, { status: 400 });
     }
   }
 
   console.log("[Stripe webhook] Event type:", event.type);
 
+  // 2) Handle relevant events
   try {
-    // -------------------------------------------------------------------------
-    // 1) Checkout completed -> attach customer/subscription to user profile
-    // -------------------------------------------------------------------------
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
 
-      const uid = getUidFromSession(session);
-      const email = getEmailFromSession(session);
-
-      const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id;
+      // subscription purchase
       const subscriptionId =
-        typeof (session as any).subscription === "string"
-          ? (session as any).subscription
-          : (session as any).subscription?.id;
+        typeof session.subscription === "string" ? session.subscription : null;
 
-      console.log("[Stripe webhook] checkout.session.completed uid/email:", uid, email);
-      console.log("[Stripe webhook] customer/subscription:", customerId, subscriptionId);
+      const customerId =
+        typeof session.customer === "string" ? session.customer : null;
 
-      // If we can't identify the user, we can't write billing fields.
-      if (!uid && !email) {
-        console.warn("[Stripe webhook] Missing uid/email on session; skipping DB write");
+      let userId = pickUidFromEvent(event);
+      if (!userId) userId = await findUserIdFallback(event);
+
+      if (!userId) {
+        console.warn("[Stripe webhook] No userId found (metadata/client_reference_id/email). Skipping DB update.");
         return NextResponse.json({ received: true });
       }
 
-      let stripePriceId: string | null = null;
-      let stripeCurrentPeriodEnd: Date | null = null;
-
-      if (subscriptionId) {
-        const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-          expand: ["items.data.price"],
-        });
-
-        stripePriceId = getSubscriptionPriceId(subscription);
-        const periodEndUnix = getSubscriptionPeriodEndUnix(subscription);
-        stripeCurrentPeriodEnd = periodEndUnix ? new Date(periodEndUnix * 1000) : null;
+      if (!subscriptionId) {
+        // Could be one-time payment; if you want to handle those later, do it here.
+        console.log("[Stripe webhook] checkout.session.completed without subscription (one-time?). ACK only.");
+        return NextResponse.json({ received: true });
       }
 
-      // Write to Prisma (public.profiles via @@map("profiles"))
-      // We try by id first if uid exists; otherwise fallback to email.
-      if (uid) {
-        // If your profiles row already exists (common with Supabase),
-        // update will work; if not, upsert creates it.
-        await prisma.user.upsert({
-          where: { id: uid },
-          create: {
-            id: uid,
-            email: email ?? `missing-email+${uid}@example.com`,
-            stripeCustomerId: customerId ?? null,
-            stripeSubscriptionId: subscriptionId ?? null,
-            stripePriceId,
-            stripeCurrentPeriodEnd,
-          },
-          update: {
-            ...(email ? { email } : {}),
-            stripeCustomerId: customerId ?? null,
-            stripeSubscriptionId: subscriptionId ?? null,
-            stripePriceId,
-            stripeCurrentPeriodEnd,
-          },
-        });
-      } else if (email) {
-        await prisma.user.upsert({
-          where: { email },
-          create: {
-            email,
-            stripeCustomerId: customerId ?? null,
-            stripeSubscriptionId: subscriptionId ?? null,
-            stripePriceId,
-            stripeCurrentPeriodEnd,
-          },
-          update: {
-            stripeCustomerId: customerId ?? null,
-            stripeSubscriptionId: subscriptionId ?? null,
-            stripePriceId,
-            stripeCurrentPeriodEnd,
-          },
-        });
-      }
+      // Retrieve subscription to get price + period end
+      const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ["items.data.price"],
+      });
 
-      console.log("[Stripe webhook] DB updated for checkout.session.completed");
+      const subAny: any = sub as any;
+      const priceId: string | null =
+        subAny?.items?.data?.[0]?.price?.id ?? null;
+
+      const periodEndUnix: number | null =
+        typeof subAny?.current_period_end === "number" ? subAny.current_period_end : null;
+
+      const periodEndDate: Date | null =
+        periodEndUnix ? new Date(periodEndUnix * 1000) : null;
+
+      await upsertBillingOnUser({
+        userId,
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscriptionId,
+        stripePriceId: priceId,
+        stripeCurrentPeriodEnd: periodEndDate,
+      });
+
+      console.log("[Stripe webhook] Updated billing fields for user:", userId);
     }
 
-    // -------------------------------------------------------------------------
-    // 2) Subscription changed -> keep plan fields in sync
-    // -------------------------------------------------------------------------
     if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
@@ -215,40 +175,48 @@ export async function POST(req: NextRequest) {
     ) {
       const subscription = event.data.object as Stripe.Subscription;
 
-      const customerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
+      const subAny: any = subscription as any;
       const subscriptionId = subscription.id;
+      const customerId = typeof subscription.customer === "string" ? subscription.customer : null;
 
-      const stripePriceId = getSubscriptionPriceId(subscription);
-      const periodEndUnix = getSubscriptionPeriodEndUnix(subscription);
-      const stripeCurrentPeriodEnd = periodEndUnix ? new Date(periodEndUnix * 1000) : null;
+      const priceId: string | null =
+        subAny?.items?.data?.[0]?.price?.id ?? null;
 
-      // Find user by stripeCustomerId
-      const user = await prisma.user.findFirst({
-        where: { stripeCustomerId: customerId },
-        select: { id: true },
-      });
+      const periodEndUnix: number | null =
+        typeof subAny?.current_period_end === "number" ? subAny.current_period_end : null;
 
-      if (!user) {
-        console.warn("[Stripe webhook] No user found for stripeCustomerId:", customerId);
+      const periodEndDate: Date | null =
+        periodEndUnix ? new Date(periodEndUnix * 1000) : null;
+
+      // We still need to map this event to a user.
+      // Prefer metadata uid if you add it; otherwise we try email fallback.
+      let userId = pickUidFromEvent(event);
+      if (!userId) userId = await findUserIdFallback(event);
+
+      if (!userId) {
+        console.warn("[Stripe webhook] subscription.* event: no userId found. Skipping DB update.");
         return NextResponse.json({ received: true });
       }
 
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          stripeSubscriptionId: subscriptionId ?? null,
-          stripePriceId,
-          stripeCurrentPeriodEnd,
-        },
+      // If deleted, clear subscription fields
+      const isDeleted = event.type === "customer.subscription.deleted";
+
+      await upsertBillingOnUser({
+        userId,
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: isDeleted ? null : subscriptionId,
+        stripePriceId: isDeleted ? null : priceId,
+        stripeCurrentPeriodEnd: isDeleted ? null : periodEndDate,
       });
 
-      console.log("[Stripe webhook] DB updated for subscription event:", event.type);
+      console.log("[Stripe webhook] Synced subscription event to user:", userId);
     }
-
-    console.log("==== STRIPE WEBHOOK END ====");
-    return NextResponse.json({ received: true });
   } catch (err: any) {
-    console.error("[Stripe webhook] Handler failed:", err?.message);
-    return new NextResponse("Webhook handler failed", { status: 500 });
+    console.error("[Stripe webhook] Handler error:", err?.message);
+    // return 200 so Stripe doesn’t retry forever if your handler had a non-critical failure
+    return NextResponse.json({ received: true });
   }
+
+  console.log("==== STRIPE WEBHOOK END ====");
+  return NextResponse.json({ received: true });
 }
