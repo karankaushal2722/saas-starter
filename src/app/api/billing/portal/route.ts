@@ -1,35 +1,48 @@
-// src/app/api/billing/portal/route.ts
-export const runtime = 'nodejs';
+import { NextRequest, NextResponse } from "next/server";
+import Stripe from "stripe";
 
-import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
-function resolveAppUrl(req: NextRequest): string {
-  const host = req.headers.get('host') ?? 'localhost:3000';
-  const proto = process.env.VERCEL ? 'https' : 'http';
-  return `${proto}://${host}`;
+if (!stripeSecretKey) {
+  throw new Error("STRIPE_SECRET_KEY is not set");
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const { customerId, returnUrl } = await req.json();
+const stripe = new Stripe(stripeSecretKey, {
+  apiVersion: "2025-10-29.clover",
+});
 
-    if (!customerId) {
-      return NextResponse.json({ error: 'Missing customerId' }, { status: 400 });
+export async function GET(req: NextRequest) {
+  try {
+    const url = new URL(req.url);
+    const sessionId = url.searchParams.get("session_id");
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: "Missing session ID" },
+        { status: 400 }
+      );
     }
 
-    const origin = resolveAppUrl(req);
+    const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
 
-    const portal = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: returnUrl ?? `${origin}/billing`,
+    if (!checkoutSession.customer) {
+      return NextResponse.json(
+        { error: "Customer not found" },
+        { status: 404 }
+      );
+    }
+
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: checkoutSession.customer.toString(),
+      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/plan`,
     });
 
-    return NextResponse.json({ url: portal.url }, { status: 200 });
+    return NextResponse.redirect(portalSession.url);
   } catch (err: any) {
-    console.error('Portal error:', err?.message);
-    return NextResponse.json({ error: 'Portal failed' }, { status: 500 });
+    console.error("Error creating billing portal session:", err);
+    return NextResponse.json(
+      { error: err.message },
+      { status: 500 }
+    );
   }
 }
