@@ -1,8 +1,6 @@
 // src/app/api/stripe/create-checkout-session/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const demoMode = process.env.DEMO_MODE === "true";
@@ -11,97 +9,77 @@ if (!stripeSecretKey) {
   throw new Error("STRIPE_SECRET_KEY not set");
 }
 
+// Use the same version your Stripe types expect
 const stripe = new Stripe(stripeSecretKey, {
   apiVersion: "2025-10-29.clover",
 });
 
-// Helper: pick correct price id from env based on plan + interval
-function getPriceId(plan: string, interval: string): string | null {
-  const key = `${plan}_${interval}`.toLowerCase();
+// ---------- Helpers ----------
 
-  switch (key) {
-    case "starter_month":
-      return process.env.STRIPE_PRICE_STARTER_MONTHLY || null;
-    case "starter_year":
-      return process.env.STRIPE_PRICE_STARTER_YEARLY || null;
-    case "business_month":
-      return process.env.STRIPE_PRICE_BUSINESS_MONTHLY || null;
-    case "business_year":
-      return process.env.STRIPE_PRICE_BUSINESS_YEARLY || null;
-    // add more plans here if you introduce them
-    default:
-      return null;
-  }
+function normalizeInterval(interval: string | null): "month" | "year" {
+  if (!interval) return "month";
+  const v = interval.toLowerCase();
+  if (v === "year" || v === "yearly" || v === "annual") return "year";
+  return "month";
 }
 
-export async function POST(req: NextRequest) {
+function getPriceId(plan: string | null, interval: string | null): string | null {
+  const billingInterval = normalizeInterval(interval);
+
+  if (plan === "starter") {
+    return billingInterval === "month"
+      ? process.env.STRIPE_PRICE_STARTER_MONTHLY ?? null
+      : process.env.STRIPE_PRICE_STARTER_YEARLY ?? null;
+  }
+
+  if (plan === "business") {
+    return billingInterval === "month"
+      ? process.env.STRIPE_PRICE_BUSINESS_MONTHLY ?? null
+      : process.env.STRIPE_PRICE_BUSINESS_YEARLY ?? null;
+  }
+
+  // You can add "pro" etc. here later if needed
+
+  return null;
+}
+
+function getOriginFromRequest(req: NextRequest): string {
+  const url = new URL(req.url);
+
+  // Prefer explicit base URL if set
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+
+  return `${url.protocol}//${url.host}`;
+}
+
+async function handleCreateCheckoutSession(req: NextRequest): Promise<NextResponse> {
   try {
-    // Get logged-in Supabase user
-    const supabase = createRouteHandlerClient({ cookies });
-    const {
-      data: { user },
-      error: supaError,
-    } = await supabase.auth.getUser();
-
-    if (supaError || !user) {
-      console.error("[checkout] No Supabase user", supaError);
-      return NextResponse.json(
-        { error: "You must be signed in to start a subscription." },
-        { status: 401 }
-      );
-    }
-
     const url = new URL(req.url);
-    const planRaw = url.searchParams.get("plan") || "business";
-    const intervalRaw = url.searchParams.get("interval") || "month";
-
-    const plan = planRaw.toLowerCase();
-    const interval = intervalRaw.toLowerCase();
+    const plan = url.searchParams.get("plan");
+    const interval = url.searchParams.get("interval");
 
     const priceId = getPriceId(plan, interval);
 
     if (!priceId) {
-      console.error("[checkout] Invalid plan/interval", { plan, interval });
+      console.error("[checkout] Missing or invalid priceId", { plan, interval });
       return NextResponse.json(
-        { error: "Invalid plan or billing interval." },
+        { error: "Invalid plan/interval – missing Stripe price ID" },
         { status: 400 }
       );
     }
 
-    const baseUrl =
-      process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-
-    // Useful debug log (shows up in Vercel logs)
-    console.log("[checkout] incoming", {
-      origin: req.headers.get("origin"),
-      planRaw,
-      intervalRaw,
-      plan,
-      interval,
-      priceId,
-      env: {
-        DEMO_MODE: demoMode,
-        STRIPE_PRICE_STARTER_MONTHLY: !!process.env.STRIPE_PRICE_STARTER_MONTHLY,
-        STRIPE_PRICE_STARTER_YEARLY: !!process.env.STRIPE_PRICE_STARTER_YEARLY,
-        STRIPE_PRICE_BUSINESS_MONTHLY:
-          !!process.env.STRIPE_PRICE_BUSINESS_MONTHLY,
-        STRIPE_PRICE_BUSINESS_YEARLY:
-          !!process.env.STRIPE_PRICE_BUSINESS_YEARLY,
-      },
-    });
+    const origin = getOriginFromRequest(req);
 
     if (demoMode) {
-      // In demo mode we don't actually hit Stripe – just fake a redirect
-      return NextResponse.json({
-        demo: true,
-        redirectUrl: `${baseUrl}/dashboard?checkout=demo`,
+      console.log("[checkout] DEMO_MODE=true, still creating real Stripe session for now", {
+        plan,
+        interval,
+        priceId,
       });
     }
 
-    const email = user.email || undefined;
-    const supabaseUserId = user.id;
-
-    // Create real Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
@@ -111,32 +89,34 @@ export async function POST(req: NextRequest) {
           quantity: 1,
         },
       ],
-      success_url: `${baseUrl}/dashboard?checkout=success`,
-      cancel_url: `${baseUrl}/pricing?checkout=cancel`,
-      customer_email: email,
-      client_reference_id: supabaseUserId,
-      metadata: {
-        supabaseUserId,
-        email: email ?? "",
-        plan,
-        interval,
-      },
-      subscription_data: {
-        metadata: {
-          supabaseUserId,
-          email: email ?? "",
-          plan,
-          interval,
-        },
-      },
+      success_url: `${origin}/dashboard?checkout=success`,
+      cancel_url: `${origin}/pricing?checkout=cancelled`,
     });
 
-    return NextResponse.json({ url: session.url });
+    if (!session.url) {
+      console.error("[checkout] Stripe session created without URL", session);
+      return NextResponse.json(
+        { error: "Failed to create checkout session" },
+        { status: 500 }
+      );
+    }
+
+    // Redirect user to Stripe Checkout
+    return NextResponse.redirect(session.url, 303);
   } catch (err: any) {
-    console.error("[checkout] error", err);
+    console.error("[checkout] Error creating checkout session", err);
     return NextResponse.json(
-      { error: err.message || "Failed to create checkout session." },
+      { error: err?.message ?? "Error creating checkout session" },
       { status: 500 }
     );
   }
+}
+
+// Support both GET (what your pricing page uses) and POST (if you ever call it via fetch)
+export async function GET(req: NextRequest) {
+  return handleCreateCheckoutSession(req);
+}
+
+export async function POST(req: NextRequest) {
+  return handleCreateCheckoutSession(req);
 }
