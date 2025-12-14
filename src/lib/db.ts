@@ -22,7 +22,7 @@ if (process.env.NODE_ENV !== "production") {
 
 /**
  * Get the user row for a given email.
- * (Used as the "profile" for now.)
+ * (This is your "profile" in public.profiles.)
  */
 export async function getProfileByEmail(email: string) {
   if (!email) return null;
@@ -52,4 +52,11 @@ export async function saveProfileInput(
   });
 }
 
-
+/**
+ * Make sure a profile row exists for this email.
+ * You can call this after login, or anywhere you have a user email.
+ */
+export async function ensureUserProfile(email: string) {
+  if (!email) return null;
+  return saveProfileInput({ email });
+}

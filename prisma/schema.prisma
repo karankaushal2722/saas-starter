@@ -4,9 +4,10 @@
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 
-  // REQUIRED for Supabase:
-  // public.profiles → auth.users (foreign key)
+  // Either keep this, or even remove it entirely.
+  // The key thing: we are NOT running prisma db push / migrate anymore.
   schemas = ["public", "auth"]
 }
 
@@ -14,32 +15,27 @@ generator client {
   provider = "prisma-client-js"
 }
 
+
 // -----------------------------------------------------------------------------
 //  USER MODEL  (maps to public.profiles, NOT auth.users — that is managed by Supabase)
 // -----------------------------------------------------------------------------
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // Stripe Billing Fields
-  stripeCustomerId   String? @unique
+  id                   String   @id @default(uuid())
+  email                String   @unique
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  stripeCustomerId     String?  @unique
   stripeSubscriptionId String?
-  stripePriceId      String?
+  stripePriceId        String?
   stripeCurrentPeriodEnd DateTime?
 
-  // Relations
   documents    Document[]
   featureFlags FeatureFlag[]
 
-  @@map("profiles")         // Supabase public.profiles table
+  @@map("profiles")
   @@schema("public")
 }
 
-// -----------------------------------------------------------------------------
-//  DOCUMENT MODEL
-// -----------------------------------------------------------------------------
 model Document {
   id        String   @id @default(uuid())
   title     String
@@ -47,27 +43,22 @@ model Document {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relation
   userId String
   user   User @relation(fields: [userId], references: [id])
 
-  @@map("documents")        // public.documents
+  @@map("documents")
   @@schema("public")
 }
 
-// -----------------------------------------------------------------------------
-//  FEATURE FLAG MODEL
-// -----------------------------------------------------------------------------
 model FeatureFlag {
   id        String   @id @default(uuid())
   flag      String
   enabled   Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  // Relation
   userId String
   user   User @relation(fields: [userId], references: [id])
 
-  @@map("feature_flags")    // public.feature_flags
+  @@map("feature_flags")
   @@schema("public")
 }

@@ -1,6 +1,11 @@
 "use client";
 
-import React, { useState, ChangeEvent, FormEvent } from "react";
+import React, {
+  useState,
+  useEffect,
+  ChangeEvent,
+  FormEvent,
+} from "react";
 
 const LANGUAGES = [
   "English",
@@ -13,9 +18,28 @@ const LANGUAGES = [
 ];
 
 export default function DashboardPage() {
+  // ===== Ensure profile exists in Supabase =====
+  useEffect(() => {
+    const ensureProfile = async () => {
+      try {
+        // This will hit our server route and make sure
+        // there is a row in public.profiles for the logged-in user.
+        await fetch("/api/profile/ensure", {
+          method: "POST",
+        });
+      } catch (err) {
+        console.error("Failed to ensure profile:", err);
+      }
+    };
+
+    ensureProfile();
+  }, []);
+
   // ===== Q&A STATE =====
   const [qaIndustry, setQaIndustry] = useState("");
-  const [qaLanguage, setQaLanguage] = useState("Same language as my question");
+  const [qaLanguage, setQaLanguage] = useState(
+    "Same language as my question"
+  );
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
@@ -23,7 +47,9 @@ export default function DashboardPage() {
 
   // ===== DOCUMENT REVIEW STATE =====
   const [docIndustry, setDocIndustry] = useState("");
-  const [docLanguage, setDocLanguage] = useState("Same language as my question");
+  const [docLanguage, setDocLanguage] = useState(
+    "Same language as my question"
+  );
   const [docFileName, setDocFileName] = useState<string | null>(null);
   const [docText, setDocText] = useState("");
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -104,7 +130,9 @@ export default function DashboardPage() {
       reader.onload = () => {
         const text = (reader.result as string) || "";
         if (!text.trim()) {
-          setDocError("This file appears to be empty or unreadable as text.");
+          setDocError(
+            "This file appears to be empty or unreadable as text."
+          );
           return;
         }
         setDocText(text);
@@ -164,9 +192,9 @@ export default function DashboardPage() {
     <div style={{ maxWidth: 900, margin: "40px auto", padding: "0 16px" }}>
       <h1>Your Legal Copilot Dashboard</h1>
       <p>
-        Ask questions about contracts, compliance, or legal risks for your small
-        business — in your own language. Then upload or paste documents (even
-        images) to get a clear, plain-language review.
+        Ask questions about contracts, compliance, or legal risks for your
+        small business — in your own language. Then upload or paste documents
+        (even images) to get a clear, plain-language review.
       </p>
 
       {/* ===== Q&A SECTION ===== */}
@@ -220,15 +248,17 @@ export default function DashboardPage() {
             </label>
           </div>
 
-          <button type="submit" disabled={qaLoading} style={{ padding: "8px 16px" }}>
+          <button
+            type="submit"
+            disabled={qaLoading}
+            style={{ padding: "8px 16px" }}
+          >
             {qaLoading ? "Asking…" : "Ask Legal Copilot"}
           </button>
         </form>
 
         {qaError && (
-          <p style={{ color: "red", marginTop: 12 }}>
-            Error: {qaError}
-          </p>
+          <p style={{ color: "red", marginTop: 12 }}>Error: {qaError}</p>
         )}
 
         {answer && (
@@ -249,9 +279,9 @@ export default function DashboardPage() {
       <section style={{ marginTop: 32, marginBottom: 48 }}>
         <h2>Review a document</h2>
         <p style={{ maxWidth: 700 }}>
-          Upload a contract, notice, letter, or agreement (including a photo of
-          the document), or paste the text. We’ll summarize it and highlight
-          risks, obligations, and next steps in simple language.
+          Upload a contract, notice, letter, or agreement (including a photo
+          of the document), or paste the text. We’ll summarize it and
+          highlight risks, obligations, and next steps in simple language.
         </p>
 
         <form onSubmit={handleReview}>
@@ -318,15 +348,17 @@ export default function DashboardPage() {
             </label>
           </div>
 
-          <button type="submit" disabled={docLoading} style={{ padding: "8px 16px" }}>
+          <button
+            type="submit"
+            disabled={docLoading}
+            style={{ padding: "8px 16px" }}
+          >
             {docLoading ? "Reviewing…" : "Review document"}
           </button>
         </form>
 
         {docError && (
-          <p style={{ color: "red", marginTop: 12 }}>
-            Error: {docError}
-          </p>
+          <p style={{ color: "red", marginTop: 12 }}>Error: {docError}</p>
         )}
 
         {docResult && (
