@@ -1,5 +1,6 @@
 // src/lib/db.ts
 import { PrismaClient } from "@prisma/client";
+import { planFromPriceId, type PlanId } from "./plan"; // ⬅️ ADD THIS LINE
 
 declare global {
   // allow global `var prisma` so we don't create multiple clients in dev
@@ -22,7 +23,7 @@ if (process.env.NODE_ENV !== "production") {
 
 /**
  * Get the user row for a given email.
- * (This is your "profile" in public.profiles.)
+ * (Used as the "profile" for now.)
  */
 export async function getProfileByEmail(email: string) {
   if (!email) return null;
@@ -30,6 +31,22 @@ export async function getProfileByEmail(email: string) {
   return prisma.user.findUnique({
     where: { email },
   });
+}
+
+/**
+ * Get profile + derived plan info in one call.
+ */
+export async function getProfileWithPlanByEmail(email: string): Promise<
+  | (Awaited<ReturnType<typeof prisma.user.findUnique>> & {
+      planId: PlanId;
+    })
+  | null
+> {
+  const user = await getProfileByEmail(email);
+  if (!user) return null;
+
+  const planId = planFromPriceId(user.stripePriceId ?? null);
+  return { ...user, planId };
 }
 
 /**
@@ -50,13 +67,4 @@ export async function saveProfileInput(
     update: {},
     create: { email },
   });
-}
-
-/**
- * Make sure a profile row exists for this email.
- * You can call this after login, or anywhere you have a user email.
- */
-export async function ensureUserProfile(email: string) {
-  if (!email) return null;
-  return saveProfileInput({ email });
 }

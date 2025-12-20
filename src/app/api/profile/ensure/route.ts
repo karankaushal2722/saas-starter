@@ -1,51 +1,46 @@
 // src/app/api/profile/ensure/route.ts
 
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { NextResponse } from "next/server";
+import { getProfileWithPlanByEmail, saveProfileInput } from "@/lib/db";
+// import whatever you use to get the current session/user:
+import { getServerSession } from "next-auth"; // <-- if you're using next-auth
+import { authOptions } from "@/app/api/auth/[...nextauth]/options"; // <-- adjust path if needed
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-/**
- * This route is intentionally simple:
- * - It does NOT use Supabase auth helpers or cookies.
- * - If an `email` is provided in the JSON body, it upserts a User row.
- * - If not, it just returns { ok: true }.
- *
- * This avoids the "this.context.cookies(...).get is not a function" error
- * you’re seeing in Vercel logs.
- */
-export async function POST(req: NextRequest) {
+export async function POST() {
   try {
-    let email: string | null = null;
+    // 1) Get logged-in user (keep this part consistent with your existing code)
+    const session = await getServerSession(authOptions);
+    const email = session?.user?.email;
 
-    try {
-      const body = await req.json();
-      if (body && typeof body.email === "string") {
-        email = body.email;
-      }
-    } catch {
-      // no body / invalid JSON – that's fine, we just skip upsert
+    if (!email) {
+      return NextResponse.json(
+        { ok: false, error: "Not authenticated" },
+        { status: 401 }
+      );
     }
 
-    let profile = null;
+    // 2) Make sure a row exists (same idea as your current code)
+    const profile = await saveProfileInput({ email });
 
-    if (email) {
-      profile = await prisma.user.upsert({
-        where: { email },
-        update: {},
-        create: { email },
-      });
-    }
+    // 3) Fetch profile + derived plan
+    const profileWithPlan = await getProfileWithPlanByEmail(email);
 
+    return NextResponse.json({
+      ok: true,
+      profile: {
+        id: profileWithPlan?.id ?? profile.id,
+        email: profileWithPlan?.email ?? profile.email,
+        planId: profileWithPlan?.planId ?? "free",
+        stripeCustomerId: profileWithPlan?.stripeCustomerId ?? null,
+        stripeSubscriptionId: profileWithPlan?.stripeSubscriptionId ?? null,
+        stripePriceId: profileWithPlan?.stripePriceId ?? null,
+        stripeCurrentPeriodEnd: profileWithPlan?.stripeCurrentPeriodEnd ?? null,
+      },
+    });
+  } catch (err: any) {
+    console.error("[/api/profile/ensure] error", err);
     return NextResponse.json(
-      { ok: true, profile },
-      { status: 200 }
-    );
-  } catch (err) {
-    console.error("[api/profile/ensure] error", err);
-    return NextResponse.json(
-      { ok: false, error: "Internal server error" },
+      { ok: false, error: err.message ?? "Unknown error" },
       { status: 500 }
     );
   }
