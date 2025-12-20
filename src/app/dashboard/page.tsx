@@ -1,11 +1,13 @@
+// src/app/dashboard/page.tsx
 "use client";
 
-import React, {
-  useState,
-  useEffect,
-  ChangeEvent,
-  FormEvent,
-} from "react";
+import React, { useState, ChangeEvent, FormEvent } from "react";
+
+type DashboardPageProps = {
+  searchParams?: {
+    checkout?: string;
+  };
+};
 
 const LANGUAGES = [
   "English",
@@ -17,29 +19,12 @@ const LANGUAGES = [
   "Same language as my question",
 ];
 
-export default function DashboardPage() {
-  // ===== Ensure profile exists in Supabase =====
-  useEffect(() => {
-    const ensureProfile = async () => {
-      try {
-        // This will hit our server route and make sure
-        // there is a row in public.profiles for the logged-in user.
-        await fetch("/api/profile/ensure", {
-          method: "POST",
-        });
-      } catch (err) {
-        console.error("Failed to ensure profile:", err);
-      }
-    };
-
-    ensureProfile();
-  }, []);
+export default function DashboardPage({ searchParams }: DashboardPageProps) {
+  const checkoutStatus = searchParams?.checkout;
 
   // ===== Q&A STATE =====
   const [qaIndustry, setQaIndustry] = useState("");
-  const [qaLanguage, setQaLanguage] = useState(
-    "Same language as my question"
-  );
+  const [qaLanguage, setQaLanguage] = useState("Same language as my question");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
@@ -130,9 +115,7 @@ export default function DashboardPage() {
       reader.onload = () => {
         const text = (reader.result as string) || "";
         if (!text.trim()) {
-          setDocError(
-            "This file appears to be empty or unreadable as text."
-          );
+          setDocError("This file appears to be empty or unreadable as text.");
           return;
         }
         setDocText(text);
@@ -190,11 +173,44 @@ export default function DashboardPage() {
 
   return (
     <div style={{ maxWidth: 900, margin: "40px auto", padding: "0 16px" }}>
+      {/* Checkout status banner */}
+      {checkoutStatus === "success" && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 6,
+            border: "1px solid #16a34a",
+            background: "#022c22",
+            color: "#bbf7d0",
+          }}
+        >
+          <strong>Welcome to BizGuard!</strong> Your subscription is active. You
+          can start asking questions or uploading documents right away.
+        </div>
+      )}
+
+      {checkoutStatus === "cancelled" && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 6,
+            border: "1px solid #f59e0b",
+            background: "#451a03",
+            color: "#ffedd5",
+          }}
+        >
+          Checkout was cancelled. You can still use the free tools here, or go
+          back to the pricing page any time to upgrade.
+        </div>
+      )}
+
       <h1>Your Legal Copilot Dashboard</h1>
       <p>
-        Ask questions about contracts, compliance, or legal risks for your
-        small business — in your own language. Then upload or paste documents
-        (even images) to get a clear, plain-language review.
+        Ask questions about contracts, compliance, or legal risks for your small
+        business — in your own language. Then upload or paste documents (even
+        images) to get a clear, plain-language review.
       </p>
 
       {/* ===== Q&A SECTION ===== */}
@@ -279,9 +295,9 @@ export default function DashboardPage() {
       <section style={{ marginTop: 32, marginBottom: 48 }}>
         <h2>Review a document</h2>
         <p style={{ maxWidth: 700 }}>
-          Upload a contract, notice, letter, or agreement (including a photo
-          of the document), or paste the text. We’ll summarize it and
-          highlight risks, obligations, and next steps in simple language.
+          Upload a contract, notice, letter, or agreement (including a photo of
+          the document), or paste the text. We’ll summarize it and highlight
+          risks, obligations, and next steps in simple language.
         </p>
 
         <form onSubmit={handleReview}>
