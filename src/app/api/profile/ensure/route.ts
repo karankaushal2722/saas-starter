@@ -1,46 +1,47 @@
 // src/app/api/profile/ensure/route.ts
 
 import { NextResponse } from "next/server";
-import { getProfileWithPlanByEmail, saveProfileInput } from "@/lib/db";
-// import whatever you use to get the current session/user:
-import { getServerSession } from "next-auth"; // <-- if you're using next-auth
-import { authOptions } from "@/app/api/auth/[...nextauth]/options"; // <-- adjust path if needed
+import { getProfileByEmail, saveProfileInput } from "@/lib/db";
+
+/**
+ * TODO: Wire this up to your real auth.
+ *
+ * For now this is a stub so the build works without pulling in `next-auth`.
+ * When we hook up your auth, implement this to return the logged-in user's email.
+ */
+async function getCurrentUserEmail(): Promise<string | null> {
+  // Example for later (DO NOT UNCOMMENT until we know your auth setup):
+  // const session = await getServerSession(authOptions);
+  // return session?.user?.email ?? null;
+
+  return null; // stub
+}
 
 export async function POST() {
   try {
-    // 1) Get logged-in user (keep this part consistent with your existing code)
-    const session = await getServerSession(authOptions);
-    const email = session?.user?.email;
+    const email = await getCurrentUserEmail();
 
     if (!email) {
+      // No logged in user – just return 401 so we don't blow up in logs.
       return NextResponse.json(
-        { ok: false, error: "Not authenticated" },
+        { ok: false, error: "No logged-in user found" },
         { status: 401 }
       );
     }
 
-    // 2) Make sure a row exists (same idea as your current code)
-    const profile = await saveProfileInput({ email });
+    // See if the profile already exists
+    const existing = await getProfileByEmail(email);
 
-    // 3) Fetch profile + derived plan
-    const profileWithPlan = await getProfileWithPlanByEmail(email);
+    if (!existing) {
+      // Create a minimal profile row
+      await saveProfileInput({ email });
+    }
 
-    return NextResponse.json({
-      ok: true,
-      profile: {
-        id: profileWithPlan?.id ?? profile.id,
-        email: profileWithPlan?.email ?? profile.email,
-        planId: profileWithPlan?.planId ?? "free",
-        stripeCustomerId: profileWithPlan?.stripeCustomerId ?? null,
-        stripeSubscriptionId: profileWithPlan?.stripeSubscriptionId ?? null,
-        stripePriceId: profileWithPlan?.stripePriceId ?? null,
-        stripeCurrentPeriodEnd: profileWithPlan?.stripeCurrentPeriodEnd ?? null,
-      },
-    });
+    return NextResponse.json({ ok: true });
   } catch (err: any) {
-    console.error("[/api/profile/ensure] error", err);
+    console.error("[api/profile/ensure] error:", err);
     return NextResponse.json(
-      { ok: false, error: err.message ?? "Unknown error" },
+      { ok: false, error: "Internal server error" },
       { status: 500 }
     );
   }
