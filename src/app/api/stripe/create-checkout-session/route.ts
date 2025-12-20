@@ -26,20 +26,32 @@ function normalizeInterval(interval: string | null): "month" | "year" {
 function getPriceId(plan: string | null, interval: string | null): string | null {
   const billingInterval = normalizeInterval(interval);
 
+  // Starter
   if (plan === "starter") {
     return billingInterval === "month"
       ? process.env.STRIPE_PRICE_STARTER_MONTHLY ?? null
       : process.env.STRIPE_PRICE_STARTER_YEARLY ?? null;
   }
 
+  // Business
   if (plan === "business") {
     return billingInterval === "month"
       ? process.env.STRIPE_PRICE_BUSINESS_MONTHLY ?? null
       : process.env.STRIPE_PRICE_BUSINESS_YEARLY ?? null;
   }
 
-  // You can add "pro" etc. here later if needed
+  // Business Pro – for now, reuse Business prices
+  if (
+    plan === "business_pro" ||  // what pricing page uses
+    plan === "business-pro" ||  // alternate slug
+    plan === "pro"
+  ) {
+    return billingInterval === "month"
+      ? process.env.STRIPE_PRICE_BUSINESS_MONTHLY ?? null
+      : process.env.STRIPE_PRICE_BUSINESS_YEARLY ?? null;
+  }
 
+  // Unknown plan
   return null;
 }
 
